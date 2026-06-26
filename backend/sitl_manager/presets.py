@@ -1,4 +1,5 @@
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 from sitl_manager.models import (
     Environment,
@@ -14,6 +15,35 @@ from sitl_manager.settings import (
     DEFAULT_HOME_LATITUDE,
     DEFAULT_HOME_LONGITUDE,
 )
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
+
+# Parameter families owned by the ambient-conditions and location features. They are
+# stripped from vehicle presets so applying a preset never clobbers the simulated
+# environment (wind/waves/tide) or the EKF origin the user set.
+PRESET_EXCLUDED_PREFIXES: Tuple[str, ...] = ("SIM_",)
+
+
+def load_parm_file(path: Path, exclude_prefixes: Tuple[str, ...] = PRESET_EXCLUDED_PREFIXES) -> Dict[str, float]:
+    """Parse an ArduPilot ``.parm`` dump into a name->value map.
+
+    Lines are ``NAME   VALUE`` with ``#`` comments; blank lines, comments and any
+    parameter whose name starts with an excluded prefix are skipped.
+    """
+    params: Dict[str, float] = {}
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2 or parts[0].startswith(exclude_prefixes):
+            continue
+        try:
+            params[parts[0]] = float(parts[1])
+        except ValueError:
+            continue
+    return params
+
 
 # Maps each Environment field to its ArduPilot SIM_* parameter name.
 ENVIRONMENT_PARAM_MAP: Dict[str, str] = {
@@ -42,24 +72,48 @@ ENVIRONMENT_PRESETS: List[EnvironmentPreset] = [
         name="Light chop",
         description="A gentle breeze with small waves, typical of a sheltered harbour.",
         environment=Environment(
-            wind_speed=3, wind_direction=180, wind_turbulence=0.1, wave_enable=1, wave_amplitude=0.2,
-            wave_length=8, wave_speed=0.5, tide_speed=0.2, tide_direction=90, speedup=1,
+            wind_speed=3,
+            wind_direction=180,
+            wind_turbulence=0.1,
+            wave_enable=1,
+            wave_amplitude=0.2,
+            wave_length=8,
+            wave_speed=0.5,
+            tide_speed=0.2,
+            tide_direction=90,
+            speedup=1,
         ),
     ),
     EnvironmentPreset(
         name="Open ocean",
         description="Moderate wind, rolling swell and a steady current.",
         environment=Environment(
-            wind_speed=8, wind_direction=210, wind_turbulence=0.3, wave_enable=2, wave_amplitude=0.8,
-            wave_length=20, wave_speed=1.5, tide_speed=0.6, tide_direction=120, speedup=1,
+            wind_speed=8,
+            wind_direction=210,
+            wind_turbulence=0.3,
+            wave_enable=2,
+            wave_amplitude=0.8,
+            wave_length=20,
+            wave_speed=1.5,
+            tide_speed=0.6,
+            tide_direction=120,
+            speedup=1,
         ),
     ),
     EnvironmentPreset(
         name="Storm",
         description="High wind and turbulence with large waves. Stress-test failsafes.",
         environment=Environment(
-            wind_speed=18, wind_direction=240, wind_turbulence=0.8, wave_enable=2, wave_amplitude=2.0,
-            wave_length=30, wave_speed=3.0, tide_speed=1.2, tide_direction=150, speedup=1,
+            wind_speed=18,
+            wind_direction=240,
+            wind_turbulence=0.8,
+            wave_enable=2,
+            wave_amplitude=2.0,
+            wave_length=30,
+            wave_speed=3.0,
+            tide_speed=1.2,
+            tide_direction=150,
+            speedup=1,
         ),
     ),
 ]
@@ -79,37 +133,19 @@ LOCATION_PRESETS: List[LocationPreset] = [
     LocationPreset(name="Equator origin", location=Location(latitude=0.0, longitude=0.0, heading=0)),
 ]
 
-# ArduPilot servo output functions used by the marine vehicles below.
-# 33..40 = Motor1..Motor8 (ArduSub), 59/60 = RCIN9/RCIN10 (BlueROV2 lights),
-# 73/74 = ThrottleLeft/ThrottleRight (ArduRover skid steering).
-# The SITL --frame supplies the hydrodynamics; these parameters capture the defining
-# configuration (frame class/config, motor mapping, battery, basic tuning) so the
-# simulated vehicle matches the real product. They are a curated baseline, not a full
-# factory parameter dump, and are safe to extend.
+# ArduPilot servo output functions used by the ROV presets below.
+# 33..40 = Motor1..Motor8 (ArduSub), 59/60 = RCIN9/RCIN10 (BlueROV2 lights).
+# The SITL --frame supplies the hydrodynamics; the parameters capture the defining
+# configuration so the simulated vehicle matches the real product. The BlueBoat set is
+# the full reference dump loaded from data/blueboat.parm (minus the SIM_* family); the
+# ROV sets remain a curated baseline that is safe to extend.
 VEHICLE_PRESETS: List[VehiclePreset] = [
     VehiclePreset(
         name="BlueBoat",
-        description="Blue Robotics BlueBoat — twin-thruster skid-steered surface vehicle (ArduRover).",
+        description="Blue Robotics BlueBoat — surface vehicle (ArduRover), full reference parameters.",
         vehicle=Vehicle.ROVER,
-        frame="motorboat-skid",
-        parameters={
-            "FRAME_CLASS": 2,  # Boat
-            "SERVO1_FUNCTION": 73,  # Throttle Left
-            "SERVO3_FUNCTION": 74,  # Throttle Right
-            "MOT_PWM_TYPE": 0,  # Normal PWM
-            "PILOT_STEER_TYPE": 1,  # Two paddles input (skid steering)
-            "ATC_STR_RAT_P": 0.2,
-            "ATC_STR_RAT_I": 0.2,
-            "ATC_STR_RAT_D": 0.0,
-            "ATC_SPEED_P": 0.2,
-            "ATC_SPEED_I": 0.2,
-            "CRUISE_SPEED": 2.0,
-            "CRUISE_THROTTLE": 40,
-            "WP_SPEED": 2.0,
-            "TURN_MAX_G": 0.6,
-            "BATT_MONITOR": 4,  # Analog voltage and current
-            "BATT_CAPACITY": 18000,
-        },
+        frame="rover-skid",
+        parameters=load_parm_file(DATA_DIR / "blueboat.parm"),
     ),
     VehiclePreset(
         name="BlueROV2",
@@ -155,4 +191,64 @@ VEHICLE_PRESETS: List[VehiclePreset] = [
             "BATT_AMP_PERVLT": 37.8788,
         },
     ),
+    # Generic (non Blue Robotics) ArduPilot vehicles for aerial and ground SITL work.
+    # FRAME_CLASS keeps each one distinct from the marine presets above: a ground rover
+    # is FRAME_CLASS 1 (vs the BlueBoat's boat = 2), and the copter declares its own
+    # quad airframe. ArduPlane has no FRAME_CLASS, so the plane preset relies on its
+    # SITL frame plus a little cruise tuning.
+    VehiclePreset(
+        name="UAV",
+        description="Generic ArduCopter quadrotor (X airframe) for aerial SITL development.",
+        vehicle=Vehicle.COPTER,
+        frame="quad",
+        parameters={
+            "FRAME_CLASS": 1,  # Quad
+            "FRAME_TYPE": 1,  # X
+        },
+    ),
+    VehiclePreset(
+        name="Ground Rover",
+        description="Generic ackermann-steered ground rover (ArduRover, non-skid).",
+        vehicle=Vehicle.ROVER,
+        frame="rover",
+        parameters={
+            "FRAME_CLASS": 1,  # Rover (ground), distinct from the BlueBoat's boat hull (2)
+            "SERVO1_FUNCTION": 26,  # Ground steering — front wheels (ackermann, not skid)
+            "SERVO3_FUNCTION": 70,  # Throttle
+            "TURN_RADIUS": 2.0,  # Car-like minimum turning radius, metres
+            "CRUISE_SPEED": 2.0,
+            "WP_SPEED": 2.0,
+            "ATC_SPEED_P": 0.2,
+            "ATC_STR_RAT_P": 0.2,
+        },
+    ),
+    VehiclePreset(
+        name="Plane",
+        description="Generic ArduPlane fixed-wing aircraft for aerial SITL development.",
+        vehicle=Vehicle.PLANE,
+        frame="plane",
+        parameters={
+            "TRIM_THROTTLE": 45,  # Cruise throttle, percent
+            "THR_MAX": 100,
+            "ARSPD_FBW_MIN": 9,  # Stall-safe minimum airspeed, m/s
+            "ARSPD_FBW_MAX": 22,
+        },
+    ),
 ]
+
+
+def is_builtin_preset_name(name: str) -> bool:
+    return any(preset.name == name for preset in VEHICLE_PRESETS)
+
+
+def all_vehicle_presets() -> List[VehiclePreset]:
+    """Built-in presets followed by user-saved/imported ones.
+
+    Custom presets that reuse a built-in name are ignored so the curated definitions
+    always win; importing under a built-in name is rejected at the API layer.
+    """
+    # Imported lazily to avoid a circular import: custom_presets reads the models only.
+    from sitl_manager.custom_presets import list_custom_presets
+
+    custom = [preset for preset in list_custom_presets() if not is_builtin_preset_name(preset.name)]
+    return [*VEHICLE_PRESETS, *custom]
