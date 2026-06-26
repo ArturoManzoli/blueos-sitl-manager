@@ -49,6 +49,23 @@ async function loadPresets(): Promise<void> {
   }
 }
 
+// Populate the sliders with the conditions currently set on the vehicle.
+async function refresh(): Promise<void> {
+  try {
+    const current = await EnvironmentApi.get()
+    for (const key of Object.keys(current) as (keyof Environment)[]) {
+      const value = current[key]
+      if (value != null) {
+        environment.value[key] = value
+      }
+    }
+  } catch (error) {
+    notifyError(error, 'Could not read current conditions')
+  }
+}
+
+defineExpose({ refresh })
+
 async function apply(): Promise<void> {
   busy.value = true
   try {
@@ -84,7 +101,10 @@ const degrees = (value: number): string => `${value.toFixed(0)}°`
 const meters = (value: number): string => `${value.toFixed(1)} m`
 const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
 
-onMounted(loadPresets)
+onMounted(() => {
+  loadPresets()
+  refresh()
+})
 </script>
 
 <template>

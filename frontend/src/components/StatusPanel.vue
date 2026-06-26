@@ -6,23 +6,19 @@ import { VehicleApi } from '@/services/api'
 import type { VehicleStatus } from '@/types/sitl'
 
 const status = ref<VehicleStatus | null>(null)
-const loading = ref(false)
 
 const fields = computed(() => [
   { label: 'Board', value: status.value?.board ?? '—' },
-  { label: 'Is SITL', value: status.value ? (status.value.is_sitl ? 'Yes' : 'No') : '—' },
+  { label: 'Firmware version', value: status.value?.firmware_version ?? '—' },
   { label: 'Frame', value: status.value?.frame ?? '—' },
   { label: 'Vehicle type', value: status.value?.firmware_vehicle_type ?? '—' },
 ])
 
 async function refresh(): Promise<void> {
-  loading.value = true
   try {
     status.value = await VehicleApi.status()
   } catch (error) {
     notifyError(error, 'Could not read vehicle status')
-  } finally {
-    loading.value = false
   }
 }
 
@@ -31,7 +27,8 @@ onMounted(refresh)
 </script>
 
 <template>
-  <div>
+  <!-- px-8 matches ExpansiblePanel's content inset so this row lines up with the panels. -->
+  <div class="px-8">
     <div
       v-if="status && !status.is_sitl"
       class="flex items-center gap-2 rounded-[6px] bg-[#FB8C0022] border border-[#FB8C0055] text-[#FFB74D] text-xs px-3 py-2 mb-3"
@@ -55,16 +52,6 @@ onMounted(refresh)
           {{ field.value }}
         </div>
       </div>
-      <button
-        class="rounded-[6px] bg-[#00000022] px-3 text-[#ffffffaa] hover:text-white transition-colors"
-        :class="loading ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"
-        title="Refresh status"
-        @click="refresh"
-      >
-        <v-icon :class="loading ? 'animate-spin' : ''">
-          mdi-refresh
-        </v-icon>
-      </button>
     </div>
   </div>
 </template>
