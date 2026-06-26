@@ -32,3 +32,7 @@ DEFAULT_HOME_HEADING = 270.0
 
 # Shared aiohttp timeout, in seconds, for calls to BlueOS services.
 HTTP_TIMEOUT = float(os.environ.get("SITL_HTTP_TIMEOUT", "10"))
+
+# How long to wait for the autopilot to come back online after a restart or firmware
+# install before giving up on applying a vehicle preset's parameters.
+VEHICLE_READY_TIMEOUT = float(os.environ.get("SITL_VEHICLE_READY_TIMEOUT", "120"))

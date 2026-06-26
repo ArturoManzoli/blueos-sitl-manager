@@ -96,6 +96,47 @@ async def get_param(
     return None
 
 
+async def wait_until_ready(
+    system_id: int = DEFAULT_SYSTEM_ID,
+    timeout: float = 120.0,
+    poll_interval: float = 2.0,
+    probe_param: str = "SYSID_THISMAV",
+) -> bool:
+    """Block until the autopilot answers a parameter read, i.e. it has finished booting.
+
+    Used after a restart so we only push the preset parameters once SITL is back up and
+    its parameter system is serving requests.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if await get_param(probe_param, system_id, timeout=2.0) is not None:
+            return True
+        await asyncio.sleep(poll_interval)
+    logger.warning("Timed out waiting for the autopilot to become ready")
+    return False
+
+
+async def set_param_verified(
+    name: str,
+    value: float,
+    system_id: int = DEFAULT_SYSTEM_ID,
+    attempts: int = 3,
+) -> bool:
+    """Set a parameter and confirm it stuck by reading it back, retrying a few times.
+
+    Returns True once the autopilot reports the value within a small tolerance.
+    """
+    tolerance = max(1e-3, abs(value) * 1e-3)
+    for _ in range(attempts):
+        await set_param(name, value, system_id)
+        readback = await get_param(name, system_id, timeout=2.0)
+        if readback is not None and abs(readback - value) <= tolerance:
+            return True
+        await asyncio.sleep(0.3)
+    logger.warning(f"Could not verify {name}={value} after {attempts} attempts")
+    return False
+
+
 async def set_gps_global_origin(
     latitude: float,
     longitude: float,

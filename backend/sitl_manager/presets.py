@@ -1,6 +1,13 @@
 from typing import Dict, List
 
-from sitl_manager.models import Environment, EnvironmentPreset, Location, LocationPreset
+from sitl_manager.models import (
+    Environment,
+    EnvironmentPreset,
+    Location,
+    LocationPreset,
+    Vehicle,
+    VehiclePreset,
+)
 from sitl_manager.settings import (
     DEFAULT_HOME_ALTITUDE,
     DEFAULT_HOME_HEADING,
@@ -70,4 +77,82 @@ LOCATION_PRESETS: List[LocationPreset] = [
     LocationPreset(name="San Francisco Bay", location=Location(latitude=37.8199, longitude=-122.4783, heading=0)),
     LocationPreset(name="Sydney Harbour", location=Location(latitude=-33.8523, longitude=151.2108, heading=0)),
     LocationPreset(name="Equator origin", location=Location(latitude=0.0, longitude=0.0, heading=0)),
+]
+
+# ArduPilot servo output functions used by the marine vehicles below.
+# 33..40 = Motor1..Motor8 (ArduSub), 59/60 = RCIN9/RCIN10 (BlueROV2 lights),
+# 73/74 = ThrottleLeft/ThrottleRight (ArduRover skid steering).
+# The SITL --frame supplies the hydrodynamics; these parameters capture the defining
+# configuration (frame class/config, motor mapping, battery, basic tuning) so the
+# simulated vehicle matches the real product. They are a curated baseline, not a full
+# factory parameter dump, and are safe to extend.
+VEHICLE_PRESETS: List[VehiclePreset] = [
+    VehiclePreset(
+        name="BlueBoat",
+        description="Blue Robotics BlueBoat — twin-thruster skid-steered surface vehicle (ArduRover).",
+        vehicle=Vehicle.ROVER,
+        frame="motorboat-skid",
+        parameters={
+            "FRAME_CLASS": 2,  # Boat
+            "SERVO1_FUNCTION": 73,  # Throttle Left
+            "SERVO3_FUNCTION": 74,  # Throttle Right
+            "MOT_PWM_TYPE": 0,  # Normal PWM
+            "PILOT_STEER_TYPE": 1,  # Two paddles input (skid steering)
+            "ATC_STR_RAT_P": 0.2,
+            "ATC_STR_RAT_I": 0.2,
+            "ATC_STR_RAT_D": 0.0,
+            "ATC_SPEED_P": 0.2,
+            "ATC_SPEED_I": 0.2,
+            "CRUISE_SPEED": 2.0,
+            "CRUISE_THROTTLE": 40,
+            "WP_SPEED": 2.0,
+            "TURN_MAX_G": 0.6,
+            "BATT_MONITOR": 4,  # Analog voltage and current
+            "BATT_CAPACITY": 18000,
+        },
+    ),
+    VehiclePreset(
+        name="BlueROV2",
+        description="Blue Robotics BlueROV2 — 6-thruster vectored ROV (ArduSub).",
+        vehicle=Vehicle.SUB,
+        frame="vectored",
+        parameters={
+            "FRAME_CONFIG": 1,  # Vectored
+            "SERVO1_FUNCTION": 33,  # Motor1
+            "SERVO2_FUNCTION": 34,  # Motor2
+            "SERVO3_FUNCTION": 35,  # Motor3
+            "SERVO4_FUNCTION": 36,  # Motor4
+            "SERVO5_FUNCTION": 37,  # Motor5
+            "SERVO6_FUNCTION": 38,  # Motor6
+            "SERVO9_FUNCTION": 59,  # RCIN9 — lights 1
+            "SERVO10_FUNCTION": 60,  # RCIN10 — lights 2
+            "BATT_MONITOR": 4,  # Analog voltage and current
+            "BATT_CAPACITY": 18000,
+            "BATT_VOLT_MULT": 11.0,  # Blue Robotics Power Sense Module
+            "BATT_AMP_PERVLT": 37.8788,
+        },
+    ),
+    VehiclePreset(
+        name="BlueROV2 Heavy",
+        description="Blue Robotics BlueROV2 Heavy — 8-thruster fully vectored 6-DOF ROV (ArduSub).",
+        vehicle=Vehicle.SUB,
+        frame="vectored_6dof",
+        parameters={
+            "FRAME_CONFIG": 2,  # Vectored 6DOF
+            "SERVO1_FUNCTION": 33,  # Motor1
+            "SERVO2_FUNCTION": 34,  # Motor2
+            "SERVO3_FUNCTION": 35,  # Motor3
+            "SERVO4_FUNCTION": 36,  # Motor4
+            "SERVO5_FUNCTION": 37,  # Motor5
+            "SERVO6_FUNCTION": 38,  # Motor6
+            "SERVO7_FUNCTION": 39,  # Motor7
+            "SERVO8_FUNCTION": 40,  # Motor8
+            "SERVO9_FUNCTION": 59,  # RCIN9 — lights 1
+            "SERVO10_FUNCTION": 60,  # RCIN10 — lights 2
+            "BATT_MONITOR": 4,  # Analog voltage and current
+            "BATT_CAPACITY": 18000,
+            "BATT_VOLT_MULT": 11.0,  # Blue Robotics Power Sense Module
+            "BATT_AMP_PERVLT": 37.8788,
+        },
+    ),
 ]

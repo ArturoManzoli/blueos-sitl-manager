@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -81,6 +81,33 @@ class FrameRequest(BaseModel):
 
 class VehicleTypeRequest(BaseModel):
     vehicle: Vehicle
+
+
+class VehiclePreset(BaseModel):
+    """A ready-to-fly SITL vehicle configuration: the autopilot firmware type, the SITL
+    physics frame and the defining ArduPilot parameters (frame/motor mapping, battery,
+    basic tuning). The SITL frame supplies the physics; the parameters configure the
+    vehicle to behave like the real product."""
+
+    name: str
+    description: str
+    vehicle: Vehicle
+    frame: str = Field(..., description="SITL --frame model, e.g. 'vectored' or 'motorboat-skid'.")
+    parameters: Dict[str, float] = Field(default_factory=dict)
+
+
+class VehiclePresetResult(BaseModel):
+    success: bool
+    detail: str = ""
+    applied: List[str] = Field(default_factory=list)
+    failed: List[str] = Field(default_factory=list)
+
+
+class ActivePreset(BaseModel):
+    """Which vehicle preset (if any) the running SITL currently matches. ``None`` means
+    the configuration does not match any known preset, i.e. it is custom."""
+
+    name: Optional[str] = None
 
 
 class OperationResult(BaseModel):

@@ -52,6 +52,20 @@ async def install_firmware_from_url(url: str, make_default: bool = True) -> None
     await _post("/install_firmware_from_url", params={"url": url, "make_default": make_default})
 
 
+async def install_stable_firmware(vehicle: Vehicle) -> str:
+    """Install the latest stable firmware for a vehicle type and return its name.
+
+    Raises ValueError when no stable build is offered for the vehicle.
+    """
+    firmwares = await available_firmwares(vehicle)
+    stable = next((fw for fw in firmwares if "STABLE" in str(fw.get("name", "")).upper()), None)
+    if stable is None:
+        raise ValueError(f"No stable firmware found for {vehicle.value}.")
+    logger.info(f"Installing {stable['name']} for {vehicle.value}")
+    await install_firmware_from_url(stable["url"], make_default=True)
+    return str(stable["name"])
+
+
 def is_sitl(board: Optional[Dict[str, Any]]) -> bool:
     if not board:
         return False
