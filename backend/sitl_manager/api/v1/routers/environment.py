@@ -1,4 +1,4 @@
-from typing import List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi_versioning import versioned_api_route
@@ -30,9 +30,16 @@ async def _apply(environment: Environment) -> List[str]:
 @environment_router.get("", response_model=Environment, summary="Read the current ambient SIM_* parameters.")
 @to_http_exception
 async def get_environment() -> Environment:
-    values = {}
+    values: Dict[str, Optional[float]] = {}
     for field, param_name in ENVIRONMENT_PARAM_MAP.items():
         values[field] = await mavlink.get_param(param_name)
+    # The model only accepts these two fields when positive (they are meaningless at 0).
+    # SITL legitimately reports them as defaults like SIM_SPEEDUP = -1 ("no override"),
+    # so treat a non-positive read as "unset" instead of failing the whole read.
+    for field in ("speedup", "wave_length"):
+        value = values.get(field)
+        if value is not None and value <= 0:
+            values[field] = None
     return Environment(**values)
 
 

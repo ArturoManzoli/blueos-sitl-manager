@@ -1,22 +1,40 @@
 from typing import Any, Dict, List, Optional
 
+import aiohttp
 from loguru import logger
 
 from sitl_manager.http import get_session
 from sitl_manager.models import Vehicle
-from sitl_manager.settings import ARDUPILOT_MANAGER_URL
+from sitl_manager.settings import ARDUPILOT_MANAGER_URL, FIRMWARE_INSTALL_TIMEOUT
+
+
+def _encode_params(params: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """aiohttp rejects bool query params; ardupilot-manager expects lowercase strings."""
+    if params is None:
+        return None
+    return {key: (str(value).lower() if isinstance(value, bool) else value) for key, value in params.items()}
 
 
 async def _get(path: str, params: Optional[Dict[str, Any]] = None) -> Any:
     session = get_session()
-    async with session.get(f"{ARDUPILOT_MANAGER_URL}{path}", params=params) as response:
+    async with session.get(f"{ARDUPILOT_MANAGER_URL}{path}", params=_encode_params(params)) as response:
         response.raise_for_status()
         return await response.json()
 
 
-async def _post(path: str, params: Optional[Dict[str, Any]] = None, json_body: Any = None) -> Any:
+async def _post(
+    path: str,
+    params: Optional[Dict[str, Any]] = None,
+    json_body: Any = None,
+    timeout: Optional[float] = None,
+) -> Any:
     session = get_session()
-    async with session.post(f"{ARDUPILOT_MANAGER_URL}{path}", params=params, json=json_body) as response:
+    extra: Dict[str, Any] = {}
+    if timeout is not None:
+        extra["timeout"] = aiohttp.ClientTimeout(total=timeout)
+    async with session.post(
+        f"{ARDUPILOT_MANAGER_URL}{path}", params=_encode_params(params), json=json_body, **extra
+    ) as response:
         response.raise_for_status()
         if response.content_type == "application/json":
             return await response.json()
@@ -49,7 +67,12 @@ async def available_firmwares(vehicle: Vehicle) -> List[Dict[str, Any]]:
 
 
 async def install_firmware_from_url(url: str, make_default: bool = True) -> None:
-    await _post("/install_firmware_from_url", params={"url": url, "make_default": make_default})
+    # Firmware install is a long download/unpack; override the short default HTTP timeout.
+    await _post(
+        "/install_firmware_from_url",
+        params={"url": url, "make_default": make_default},
+        timeout=FIRMWARE_INSTALL_TIMEOUT,
+    )
 
 
 async def install_stable_firmware(vehicle: Vehicle) -> str:

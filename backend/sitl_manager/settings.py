@@ -36,3 +36,7 @@ HTTP_TIMEOUT = float(os.environ.get("SITL_HTTP_TIMEOUT", "10"))
 # How long to wait for the autopilot to come back online after a restart or firmware
 # install before giving up on applying a vehicle preset's parameters.
 VEHICLE_READY_TIMEOUT = float(os.environ.get("SITL_VEHICLE_READY_TIMEOUT", "120"))
+
+# Installing firmware downloads and unpacks a SITL binary, which takes far longer than a
+# normal API call; it needs its own timeout so it is not killed by HTTP_TIMEOUT.
+FIRMWARE_INSTALL_TIMEOUT = float(os.environ.get("SITL_FIRMWARE_INSTALL_TIMEOUT", "300"))
