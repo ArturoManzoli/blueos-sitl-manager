@@ -79,13 +79,13 @@
           @dblclick="isEditingCurrentSliderValue = true"
         >
         <p
-          class="absolute min-w-[30px] ml-[10px] mt-1 text-[15px] text-center z-10 pointer-events-none"
+          class="absolute left-[4px] top-1/2 -translate-y-1/2 min-w-[30px] text-[12px] font-medium text-center z-10 pointer-events-none"
           :class="theme === 'dark' ? 'text-[#ffffff44]' : 'text-[#00000066]'"
         >
           {{ labelMinDisplay }}
         </p>
         <p
-          class="absolute right-0 min-w-[30px] mr-[10px] mt-1 text-[15px] text-center z-10 pointer-events-none"
+          class="absolute right-[4px] top-1/2 -translate-y-1/2 min-w-[30px] text-[12px] font-medium text-center z-10 pointer-events-none"
           :class="theme === 'dark' ? 'text-[#ffffff44]' : 'text-[#00000066]'"
         >
           {{ labelMaxDisplay }}
