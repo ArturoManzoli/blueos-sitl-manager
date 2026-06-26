@@ -8,93 +8,109 @@
     </div>
     <div v-else />
     <slot name="insetElement" />
-    <div
-      class="relative flex justify-end overflow-hidden rounded-[6px] elevation-1 z-[666]"
-      :class="[theme === 'dark' ? 'bg-[#464646AA]' : 'bg-[#00000011]', disabled ? 'opacity-50 pointer-events-none' : '']"
-      :style="{ height: height || '30px' }"
-    >
+    <div class="flex items-center">
       <div
-        id="border-releif"
-        class="absolute left-[-20px] top-0 h-full w-[6px] bg-[#6699cc] z-[20] pointer-events-none"
-      />
-      <template
-        v-for="(btn, idx) in buttonItems"
-        :key="btn.name"
+        v-if="infoTooltip"
+        class="relative group inline-flex items-center mr-2"
       >
-        <button
-          :disabled="disabled || btn.disabled"
-          class="flex items-center justify-center px-4 text-sm font-medium transition-colors duration-200"
-          :class="[
-            selected[idx] ? 'text-white' : theme === 'dark' ? 'text-[#ffffff99]' : 'text-[#00000066]',
-            selected[idx] && type === 'switch' ? 'elevation-5' : 'elevation-0',
-            disabled || btn.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
-          ]"
-          :style="{ backgroundColor: selected[idx] ? btn.activeColor || '#0B5087' : undefined }"
-          @click="!btn.disabled && toggleButton(idx)"
-        >
-          <div class="relative group inline-block">
-            <p class="text-xs">
-              {{ btn.name }}
-            </p>
-            <div
-              v-if="btn.tooltip"
-              class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover:block whitespace-no-wrap px-2 py-1 text-xs rounded bg-gray-700 text-white"
-            >
-              {{ btn.tooltip }}
-            </div>
-          </div>
-        </button>
-        <div
-          v-if="idx < buttonItems.length - 1"
-          class="w-[1px] bg-[#FFFFFF22] my-2"
-        />
-      </template>
-      <div
-        v-if="buttonsMenu?.length"
-        class="w-[1px] bg-[#FFFFFF22] my-2 mr-[3px]"
-      />
-      <div
-        v-if="buttonsMenu?.length"
-        v-click-outside="() => (menuOpen = false)"
-        class="relative"
-      >
-        <div
-          class="px-0 flex items-center justify-center h-full cursor-pointer"
+        <span
+          class="mdi mdi-information-outline text-[16px] opacity-60 cursor-help"
           :class="theme === 'dark' ? 'text-white' : 'text-black'"
-          @click="openMenu($event)"
-        >
-          <div class="self-center mdi mdi-menu-right text-[20px] mr-[2px] opacity-80" />
-        </div>
+        />
         <div
-          v-if="menuOpen"
-          class="fixed elevation-5 border-[1px] rounded-[4px] border-[#FFFFFF22] z-100"
-          :class="theme === 'dark' ? 'text-[#FFFFFF99] bg-[#363636]' : 'text-black hover:bg-gray-200'"
-          :style="flipX ? { top: menuY + 'px', right: menuRight + 'px' } : { top: menuY + 'px', left: menuX + 'px' }"
+          class="absolute bottom-full mb-1 right-0 hidden group-hover:block w-max max-w-[280px] px-2 py-1 text-xs rounded bg-gray-700 text-white z-[1000]"
         >
-          <ul>
-            <div
-              v-for="(item, idx) in buttonsMenu"
-              :key="item.name"
-            >
-              <button
-                :disabled="item.menuItemDisabled"
-                class="block w-full text-left px-4 py-2 text-[14px]"
-                :class="[
-                  idx < buttonsMenu.length - 1 ? 'border-b border-white' : '',
-                  theme === 'dark' ? 'hover:bg-[#333333]' : 'hover:bg-gray-100',
-                  item.menuItemDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
-                ]"
-                @click="
-                  () => {
-                    item.action()
-                    menuOpen = false
-                  }
-                "
+          {{ infoTooltip }}
+        </div>
+      </div>
+      <div
+        class="relative flex justify-end overflow-hidden rounded-[6px] elevation-1 z-[666]"
+        :class="[theme === 'dark' ? 'bg-[#464646AA]' : 'bg-[#00000011]', disabled ? 'opacity-50 pointer-events-none' : '']"
+        :style="{ height: height || '30px' }"
+      >
+        <div
+          id="border-releif"
+          class="absolute left-[-20px] top-0 h-full w-[6px] bg-[#6699cc] z-[20] pointer-events-none"
+        />
+        <template
+          v-for="(btn, idx) in buttonItems"
+          :key="btn.name"
+        >
+          <button
+            :disabled="disabled || btn.disabled"
+            class="flex items-center justify-center px-4 text-sm font-medium transition-colors duration-200"
+            :class="[
+              selected[idx] ? 'text-white' : theme === 'dark' ? 'text-[#ffffff99]' : 'text-[#00000066]',
+              selected[idx] && type === 'switch' ? 'elevation-5' : 'elevation-0',
+              disabled || btn.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+            ]"
+            :style="{ backgroundColor: selected[idx] ? btn.activeColor || '#0B5087' : undefined }"
+            @click="!btn.disabled && toggleButton(idx)"
+          >
+            <div class="relative group inline-block">
+              <p class="text-xs">
+                {{ btn.name }}
+              </p>
+              <div
+                v-if="btn.tooltip"
+                class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover:block whitespace-no-wrap px-2 py-1 text-xs rounded bg-gray-700 text-white"
               >
-                {{ item.name }}
-              </button>
+                {{ btn.tooltip }}
+              </div>
             </div>
-          </ul>
+          </button>
+          <div
+            v-if="idx < buttonItems.length - 1"
+            class="w-[1px] bg-[#FFFFFF22] my-2"
+          />
+        </template>
+        <div
+          v-if="buttonsMenu?.length"
+          class="w-[1px] bg-[#FFFFFF22] my-2 mr-[3px]"
+        />
+        <div
+          v-if="buttonsMenu?.length"
+          v-click-outside="() => (menuOpen = false)"
+          class="relative"
+        >
+          <div
+            class="px-0 flex items-center justify-center h-full cursor-pointer"
+            :class="theme === 'dark' ? 'text-white' : 'text-black'"
+            @click="openMenu($event)"
+          >
+            <div class="self-center mdi mdi-menu-right text-[20px] mr-[2px] opacity-80" />
+          </div>
+          <div
+            v-if="menuOpen"
+            class="fixed elevation-5 border-[1px] rounded-[4px] border-[#FFFFFF22] z-100"
+            :class="theme === 'dark' ? 'text-[#FFFFFF99] bg-[#363636]' : 'text-black hover:bg-gray-200'"
+            :style="flipX ? { top: menuY + 'px', right: menuRight + 'px' } : { top: menuY + 'px', left: menuX + 'px' }"
+          >
+            <ul>
+              <div
+                v-for="(item, idx) in buttonsMenu"
+                :key="item.name"
+              >
+                <button
+                  :disabled="item.menuItemDisabled"
+                  class="block w-full text-left px-4 py-2 text-[14px]"
+                  :class="[
+                    idx < buttonsMenu.length - 1 ? 'border-b border-white' : '',
+                    theme === 'dark' ? 'hover:bg-[#333333]' : 'hover:bg-gray-100',
+                    item.menuItemDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+                  ]"
+                  @click="
+                    () => {
+                      item.action()
+                      menuOpen = false
+                    }
+                  "
+                >
+                  {{ item.name }}
+                </button>
+              </div>
+            </ul>
+          </div>
         </div>
       </div>
     </div>
@@ -151,6 +167,8 @@ const props = defineProps<{
   height?: string
   /** Label text on the left side of the button group */
   label?: string
+  /** Optional info tooltip shown via an info icon next to the control. */
+  infoTooltip?: string
 }>()
 
 const emit = defineEmits<{
