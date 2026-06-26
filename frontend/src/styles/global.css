@@ -21,3 +21,14 @@ body,
 .v-btn.v-btn--disabled .v-btn__overlay {
   opacity: 0 !important;
 }
+
+/* Dialog/menu backdrop: Vuetify's default scrim is too light here and barely dims the
+   page behind a modal. Force a near-black, frosted scrim so the content underneath
+   recedes. opacity must stay at 1 for backdrop-filter to apply, so the dimming lives in
+   the rgba background instead. */
+.v-overlay__scrim {
+  background: rgba(0, 0, 0, 0.88) !important;
+  opacity: 1 !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}

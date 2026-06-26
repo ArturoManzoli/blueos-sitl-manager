@@ -16,9 +16,18 @@ import HomeView from '@/views/HomeView.vue'
       v-model="snackbar.show"
       :color="snackbar.color"
       location="bottom right"
-      :timeout="4000"
+      :timeout="-1"
     >
       {{ snackbar.text }}
+
+      <template #actions>
+        <v-btn
+          icon="mdi-close"
+          variant="text"
+          size="small"
+          @click="snackbar.show = false"
+        />
+      </template>
     </v-snackbar>
   </v-app>
 </template>
