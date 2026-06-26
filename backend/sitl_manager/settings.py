@@ -23,6 +23,13 @@ STATIC_DIR = Path(os.environ.get("SITL_STATIC_DIR", str(Path(__file__).resolve()
 # Static assets shipped with the backend (the Lua teleport helper script, icons).
 ASSETS_DIR = Path(os.environ.get("SITL_ASSETS_DIR", str(Path(__file__).resolve().parent.parent / "assets")))
 
+# Where user-saved and imported vehicle presets are stored as JSON. Defaults to a folder
+# next to the backend for local development; the Dockerfile points it at a bind-mounted
+# path so presets survive extension updates on a real BlueOS install.
+CUSTOM_PRESETS_DIR = Path(
+    os.environ.get("SITL_CUSTOM_PRESETS_DIR", str(Path(__file__).resolve().parent / "data" / "custom_presets"))
+)
+
 # Hardcoded SITL spawn used by ArduPilot Manager (Florianópolis, Brazil). The vehicle
 # always boots here; the location panel relocates it afterwards over MAVLink.
 DEFAULT_HOME_LATITUDE = -27.563

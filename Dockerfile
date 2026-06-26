@@ -20,15 +20,20 @@ COPY --from=frontend-builder /frontend/dist ./static
 
 EXPOSE 80
 
+# User-saved and imported presets live here, bind-mounted below so they survive updates.
+ENV SITL_CUSTOM_PRESETS_DIR=/app/persistent/custom_presets
+
 LABEL version="0.1.0"
 
 # Map container port 80 to a free host port and bridge to the vehicle network so the
-# extension can reach BlueOS services via host.docker.internal.
+# extension can reach BlueOS services via host.docker.internal. The Binds entry persists
+# user-saved presets on the host across extension updates.
 LABEL permissions='{\
   "ExposedPorts": {\
     "80/tcp": {}\
   },\
   "HostConfig": {\
+    "Binds": ["/usr/blueos/extensions/sitl-manager:/app/persistent"],\
     "ExtraHosts": ["host.docker.internal:host-gateway"],\
     "PortBindings": {\
       "80/tcp": [\

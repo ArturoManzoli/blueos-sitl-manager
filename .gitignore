@@ -11,6 +11,9 @@ node_modules/
 dist/
 *.local
 
+# Runtime-created custom presets (local dev default location)
+backend/sitl_manager/data/custom_presets/
+
 # Editors / OS
 .DS_Store
 .idea/

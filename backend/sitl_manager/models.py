@@ -97,6 +97,13 @@ class VehiclePreset(BaseModel):
     parameters: Dict[str, float] = Field(default_factory=dict)
 
 
+class SavePresetRequest(BaseModel):
+    """Capture the running SITL vehicle's current configuration as a named preset."""
+
+    name: str = Field(..., min_length=1)
+    description: str = ""
+
+
 class VehiclePresetResult(BaseModel):
     success: bool
     detail: str = ""
