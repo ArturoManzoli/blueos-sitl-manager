@@ -40,6 +40,7 @@ export interface VehicleStatus {
   is_sitl: boolean
   frame: string | null
   firmware_vehicle_type: string | null
+  firmware_version: string | null
 }
 
 export interface FrameRequest {

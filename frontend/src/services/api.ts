@@ -42,6 +42,16 @@ export const VehicleApi = {
   async activePreset(): Promise<string | null> {
     return (await api.get<{ name: string | null }>('/vehicle/active-preset')).data.name
   },
+  // Snapshots the live vehicle (full parameter dump); slow, so callers show a loader.
+  async currentConfig(): Promise<VehiclePreset> {
+    return (await api.get<VehiclePreset>('/vehicle/current-config')).data
+  },
+  async savePreset(name: string, description: string): Promise<VehiclePreset> {
+    return (await api.post<VehiclePreset>('/vehicle/presets/save', { name, description })).data
+  },
+  async importPreset(preset: VehiclePreset): Promise<VehiclePreset> {
+    return (await api.post<VehiclePreset>('/vehicle/presets/import', preset)).data
+  },
 }
 
 export const EnvironmentApi = {
