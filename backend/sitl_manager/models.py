@@ -72,6 +72,7 @@ class VehicleStatus(BaseModel):
     is_sitl: bool = False
     frame: Optional[str] = None
     firmware_vehicle_type: Optional[str] = None
+    firmware_version: Optional[str] = None
 
 
 class FrameRequest(BaseModel):

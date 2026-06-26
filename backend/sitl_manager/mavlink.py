@@ -1,6 +1,8 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+import json
+from typing import Any, Dict, List, NamedTuple, Optional
 
+import aiohttp
 from loguru import logger
 
 from sitl_manager.http import get_session
@@ -27,7 +29,9 @@ def _decode_param_id(raw: Any) -> str:
     return str(raw).replace("\u0000", "").strip()
 
 
-async def send_message(message: Dict[str, Any], system_id: int = GCS_SYSTEM_ID, component_id: int = GCS_COMPONENT_ID) -> None:
+async def send_message(
+    message: Dict[str, Any], system_id: int = GCS_SYSTEM_ID, component_id: int = GCS_COMPONENT_ID
+) -> None:
     payload = {
         "header": {"system_id": system_id, "component_id": component_id, "sequence": 0},
         "message": message,
@@ -116,25 +120,188 @@ async def wait_until_ready(
     return False
 
 
-async def set_param_verified(
-    name: str,
-    value: float,
-    system_id: int = DEFAULT_SYSTEM_ID,
-    attempts: int = 3,
-) -> bool:
-    """Set a parameter and confirm it stuck by reading it back, retrying a few times.
+class BulkParamResult(NamedTuple):
+    applied: List[str]
+    failed: List[str]
+    unverified: List[str]
+    aborted: bool
 
-    Returns True once the autopilot reports the value within a small tolerance.
+
+async def set_params_bulk(
+    params: Dict[str, float],
+    system_id: int = DEFAULT_SYSTEM_ID,
+    send_delay: float = 0.02,
+    settle_delay: float = 1.0,
+    verify_timeout: float = 0.25,
+    verify_poll: float = 0.05,
+    max_consecutive_timeouts: int = 3,
+) -> BulkParamResult:
+    """Apply many parameters quickly and report which stuck.
+
+    Fires every PARAM_SET first, then reads each back once with a near-instant timeout.
+    Verifying a full parameter file one read at a time is slow, and a handful of params
+    this firmware ignores never answer a read at all. To avoid blocking the UI on those,
+    we abort the read-back pass as soon as ``max_consecutive_timeouts`` parameters in a
+    row fail to answer: every parameter was already sent, so the caller can finish in the
+    background. ``aborted`` says whether we bailed; ``unverified`` lists the params left.
     """
-    tolerance = max(1e-3, abs(value) * 1e-3)
-    for _ in range(attempts):
-        await set_param(name, value, system_id)
-        readback = await get_param(name, system_id, timeout=2.0)
-        if readback is not None and abs(readback - value) <= tolerance:
-            return True
-        await asyncio.sleep(0.3)
-    logger.warning(f"Could not verify {name}={value} after {attempts} attempts")
-    return False
+    for name, value in params.items():
+        await set_param(name, float(value), system_id)
+        if send_delay:
+            await asyncio.sleep(send_delay)
+
+    # Let the burst of writes settle before reading anything back.
+    await asyncio.sleep(settle_delay)
+
+    applied: List[str] = []
+    failed: List[str] = []
+    items = list(params.items())
+    consecutive_timeouts = 0
+    for index, (name, value) in enumerate(items):
+        target = float(value)
+        readback = await get_param(name, system_id, timeout=verify_timeout, poll_interval=verify_poll)
+        if readback is None:
+            failed.append(name)
+            logger.warning(f"Could not verify {name}={target} (no response)")
+            consecutive_timeouts += 1
+            if consecutive_timeouts >= max_consecutive_timeouts:
+                unverified = [item_name for item_name, _ in items[index + 1 :]]
+                logger.warning(
+                    f"Aborting read-back after {consecutive_timeouts} consecutive timeouts; "
+                    f"{len(unverified)} parameter(s) left to settle in the background."
+                )
+                return BulkParamResult(applied, failed, unverified, aborted=True)
+            continue
+
+        consecutive_timeouts = 0
+        tolerance = max(1e-3, abs(target) * 1e-3)
+        if abs(readback - target) <= tolerance:
+            applied.append(name)
+        else:
+            failed.append(name)
+            logger.warning(f"Could not verify {name}={target} (read {readback})")
+    return BulkParamResult(applied, failed, [], aborted=False)
+
+
+def _decode_flight_sw_version(encoded: int) -> Optional[str]:
+    """AUTOPILOT_VERSION.flight_sw_version packs the version as
+    (major << 24) | (minor << 16) | (patch << 8) | type."""
+    if not encoded:
+        return None
+    major = (encoded >> 24) & 0xFF
+    minor = (encoded >> 16) & 0xFF
+    patch = (encoded >> 8) & 0xFF
+    return f"{major}.{minor}.{patch}"
+
+
+async def get_autopilot_version(
+    system_id: int = DEFAULT_SYSTEM_ID,
+    timeout: float = 2.0,
+    poll_interval: float = 0.2,
+) -> Optional[str]:
+    """Return the running firmware version (e.g. ``4.5.7``), or ``None`` if unavailable.
+
+    AUTOPILOT_VERSION is only emitted on request, so we ask for it and then poll the
+    cached message until the autopilot answers.
+    """
+    await send_message(
+        {
+            "type": "COMMAND_LONG",
+            "command": {"type": "MAV_CMD_REQUEST_MESSAGE"},
+            "param1": 148.0,  # AUTOPILOT_VERSION message id
+            "param2": 0.0,
+            "param3": 0.0,
+            "param4": 0.0,
+            "param5": 0.0,
+            "param6": 0.0,
+            "param7": 0.0,
+            "confirmation": 0,
+            "target_system": system_id,
+            "target_component": AUTOPILOT_COMPONENT_ID,
+        }
+    )
+
+    session = get_session()
+    url = f"{MAVLINK2REST_URL}/mavlink/vehicles/{system_id}/components/{AUTOPILOT_COMPONENT_ID}/messages/AUTOPILOT_VERSION"
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    body = await response.json()
+                    raw = body.get("message", {}).get("flight_sw_version")
+                    if raw:
+                        return _decode_flight_sw_version(int(raw))
+        except Exception as error:  # noqa: BLE001 - best-effort read, keep polling
+            logger.debug(f"AUTOPILOT_VERSION poll failed: {error}")
+        await asyncio.sleep(poll_interval)
+
+    logger.warning("Timed out reading the autopilot firmware version")
+    return None
+
+
+async def dump_all_params(
+    system_id: int = DEFAULT_SYSTEM_ID,
+    timeout: float = 30.0,
+    idle_timeout: float = 3.0,
+) -> Dict[str, float]:
+    """Read every onboard parameter the autopilot reports.
+
+    mavlink2rest only caches the latest ``PARAM_VALUE`` over REST, so the burst that
+    answers a ``PARAM_REQUEST_LIST`` can only be captured on the websocket stream. We
+    open the stream, request the list, and collect values until the autopilot's declared
+    ``param_count`` is reached, the stream idles, or the overall timeout elapses.
+    """
+    ws_url = MAVLINK2REST_URL.replace("http", "ws", 1) + "/ws/mavlink?filter=PARAM_VALUE"
+    params: Dict[str, float] = {}
+    expected: Optional[int] = None
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None)) as ws_session:
+        async with ws_session.ws_connect(ws_url) as ws:
+            await send_message(
+                {
+                    "type": "PARAM_REQUEST_LIST",
+                    "target_system": system_id,
+                    "target_component": AUTOPILOT_COMPONENT_ID,
+                }
+            )
+            deadline = asyncio.get_event_loop().time() + timeout
+            while asyncio.get_event_loop().time() < deadline:
+                remaining = min(deadline - asyncio.get_event_loop().time(), idle_timeout)
+                try:
+                    raw = await ws.receive(timeout=max(remaining, 0.1))
+                except asyncio.TimeoutError:
+                    break  # stream went quiet; assume the burst is done
+                if raw.type is not aiohttp.WSMsgType.TEXT:
+                    if raw.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        break
+                    continue
+                try:
+                    body = json.loads(raw.data)
+                except (ValueError, TypeError):
+                    continue
+                message = body.get("message", body)
+                if message.get("type") != "PARAM_VALUE":
+                    continue
+                header = body.get("header") or {}
+                if header.get("component_id") not in (None, AUTOPILOT_COMPONENT_ID):
+                    continue
+                name = _decode_param_id(message.get("param_id", ""))
+                if not name:
+                    continue
+                try:
+                    params[name] = float(message.get("param_value"))
+                except (TypeError, ValueError):
+                    continue
+                count = message.get("param_count")
+                if isinstance(count, int) and count > 0:
+                    expected = count
+                if expected is not None and len(params) >= expected:
+                    break
+
+    if expected is not None and len(params) < expected:
+        logger.warning(f"Parameter dump captured {len(params)}/{expected} parameters")
+    return params
 
 
 async def set_gps_global_origin(
