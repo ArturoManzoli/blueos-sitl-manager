@@ -30,8 +30,22 @@ const busy = ref(false)
 // Which preset the running vehicle matches; 'Custom' when it matches none.
 const activePresetName = ref<string>(CUSTOM_PRESET)
 
+const presetMenuOpen = ref(false)
+const saveDialogOpen = ref(false)
+const saveName = ref('')
+const saveDescription = ref('')
+const importInput = ref<HTMLInputElement | null>(null)
+
 const vehicleItems = computed(() => vehicleTypes.map((value) => ({ name: value, value })))
-const frameItems = computed(() => frames.value.map((value) => ({ name: value, value })))
+// Keep the running frame selectable even when it is not one of the curated SITL frames,
+// so the dropdown can show what the vehicle is actually configured with.
+const frameItems = computed(() => {
+  const names = [...frames.value]
+  if (selectedFrame.value && !names.includes(selectedFrame.value)) {
+    names.unshift(selectedFrame.value)
+  }
+  return names.map((value) => ({ name: value, value }))
+})
 const presetButtons = computed<PresetButton[]>(() => {
   const buttons: PresetButton[] = presets.value.map((preset) => ({
     name: preset.name,
@@ -73,6 +87,37 @@ async function loadActivePreset(): Promise<void> {
     activePresetName.value = CUSTOM_PRESET
   }
 }
+
+// ArduPilot Manager reports the type as e.g. "ArduSub"/"ArduRover"; match it to one of
+// our short vehicle labels by substring.
+function vehicleTypeFromFirmware(firmware: string | null): VehicleType | null {
+  if (!firmware) {
+    return null
+  }
+  return vehicleTypes.find((type) => firmware.toLowerCase().includes(type.toLowerCase())) ?? null
+}
+
+// Mirror the manual-configuration fields onto whatever the vehicle currently runs.
+async function syncFromStatus(): Promise<void> {
+  try {
+    const status = await VehicleApi.status()
+    const vehicle = vehicleTypeFromFirmware(status.firmware_vehicle_type)
+    if (vehicle) {
+      selectedVehicle.value = vehicle
+    }
+    if (status.frame) {
+      selectedFrame.value = status.frame
+    }
+  } catch {
+    // Status is surfaced (and its errors reported) by the StatusPanel; stay quiet here.
+  }
+}
+
+async function refresh(): Promise<void> {
+  await Promise.all([loadActivePreset(), syncFromStatus()])
+}
+
+defineExpose({ refresh })
 
 async function applyPreset(preset: VehiclePreset): Promise<void> {
   busy.value = true
@@ -127,35 +172,140 @@ async function applyVehicle(): Promise<void> {
   }
 }
 
+function openSaveDialog(): void {
+  saveName.value = ''
+  saveDescription.value = ''
+  saveDialogOpen.value = true
+}
+
+async function confirmSavePreset(): Promise<void> {
+  const name = saveName.value.trim()
+  if (!name) {
+    return
+  }
+  saveDialogOpen.value = false
+  showLoading('Saving current configuration as a preset… reading all parameters.')
+  try {
+    const preset = await VehicleApi.savePreset(name, saveDescription.value.trim())
+    await loadPresets()
+    await loadActivePreset()
+    notify(`Saved preset "${preset.name}" with ${Object.keys(preset.parameters).length} parameters.`, 'success')
+  } catch (error) {
+    notifyError(error, 'Could not save preset')
+  } finally {
+    hideLoading()
+  }
+}
+
+function triggerDownload(preset: VehiclePreset): void {
+  const blob = new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${preset.name || 'sitl-preset'}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+async function downloadPreset(): Promise<void> {
+  showLoading('Reading current configuration… capturing all parameters.')
+  try {
+    triggerDownload(await VehicleApi.currentConfig())
+  } catch (error) {
+    notifyError(error, 'Could not export configuration')
+  } finally {
+    hideLoading()
+  }
+}
+
+async function onImportFileSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) {
+    return
+  }
+  showLoading('Importing preset…')
+  try {
+    const preset = JSON.parse(await file.text()) as VehiclePreset
+    const saved = await VehicleApi.importPreset(preset)
+    await loadPresets()
+    await loadActivePreset()
+    notify(`Imported preset "${saved.name}".`, 'success')
+  } catch (error) {
+    notifyError(error, 'Could not import preset')
+  } finally {
+    hideLoading()
+  }
+}
+
 onMounted(() => {
   loadFrames()
   loadPresets()
-  loadActivePreset()
+  refresh()
 })
 </script>
 
 <template>
   <div class="flex flex-col gap-5">
-    <div>
-      <BlueButtonGroup
-        v-if="presetButtons.length"
-        :key="activePresetName"
-        label="Vehicle preset"
-        theme="dark"
-        type="switch"
-        :disabled="busy"
-        :button-items="presetButtons"
-      />
-      <p class="text-xs text-[#ffffff88] leading-relaxed mt-2">
-        Presets install the matching firmware, set the SITL frame and write the vehicle's
-        defining parameters (motor mapping, battery, tuning), then restart the autopilot.
-      </p>
-    </div>
-
-    <div class="flex items-center gap-3">
-      <div class="flex-1 h-px bg-[#ffffff22]" />
-      <span class="text-xs uppercase tracking-wide text-[#ffffff66]">Manual configuration</span>
-      <div class="flex-1 h-px bg-[#ffffff22]" />
+    <div class="flex items-center gap-2">
+      <div class="flex-1">
+        <BlueButtonGroup
+          v-if="presetButtons.length"
+          :key="activePresetName"
+          label="Vehicle preset"
+          theme="dark"
+          type="switch"
+          :disabled="busy"
+          :button-items="presetButtons"
+          info-tooltip="Presets install the matching firmware, set the SITL frame and write the vehicle's defining parameters (motor mapping, battery, tuning), then restart the autopilot."
+        />
+      </div>
+      <v-menu
+        v-model="presetMenuOpen"
+        location="bottom end"
+      >
+        <template #activator="{ props: menuProps }">
+          <button
+            v-bind="menuProps"
+            class="rounded-[6px] px-1 py-1 text-[#ffffffaa] hover:text-white transition-colors"
+            :class="busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"
+            title="Preset actions"
+          >
+            <v-icon>mdi-dots-vertical</v-icon>
+          </button>
+        </template>
+        <v-list
+          density="compact"
+          bg-color="#2d2d2d"
+          class="py-0"
+        >
+          <v-list-item
+            prepend-icon="mdi-content-save-outline"
+            title="Save current config as preset"
+            @click="openSaveDialog"
+          />
+          <div class="h-px bg-[#ffffff0d]" />
+          <v-list-item
+            prepend-icon="mdi-download-outline"
+            title="Download preset file"
+            @click="downloadPreset"
+          />
+          <div class="h-px bg-[#ffffff0d]" />
+          <v-list-item
+            prepend-icon="mdi-upload-outline"
+            title="Import preset file"
+            @click="importInput?.click()"
+          />
+        </v-list>
+      </v-menu>
+      <input
+        ref="importInput"
+        type="file"
+        accept="application/json,.json"
+        class="hidden"
+        @change="onImportFileSelected"
+      >
     </div>
 
     <BlueSelect
@@ -179,6 +329,7 @@ onMounted(() => {
       theme="dark"
       label-on="Yes"
       label-off="No"
+      info-tooltip="Switching vehicle type installs the matching SITL firmware and restarts the autopilot. The SITL frame only takes effect after a restart."
     />
 
     <div class="flex justify-end gap-2">
@@ -200,9 +351,57 @@ onMounted(() => {
       </v-btn>
     </div>
 
-    <p class="text-xs text-[#ffffff88] leading-relaxed">
-      Switching vehicle type installs the matching SITL firmware and restarts the autopilot.
-      The SITL frame only takes effect after a restart.
-    </p>
+    <v-dialog
+      v-model="saveDialogOpen"
+      width="420"
+    >
+      <v-card
+        color="#2d2d2d"
+        class="text-white"
+      >
+        <v-card-title class="text-base">
+          Save current configuration
+        </v-card-title>
+        <v-card-text class="flex flex-col gap-3">
+          <p class="text-xs text-[#ffffff88] leading-relaxed">
+            Captures the running vehicle's type, SITL frame and every parameter into a new
+            preset you can re-apply or export later.
+          </p>
+          <v-text-field
+            v-model="saveName"
+            label="Preset name"
+            density="compact"
+            variant="outlined"
+            autofocus
+            hide-details
+            @keydown.enter="confirmSavePreset"
+          />
+          <v-text-field
+            v-model="saveDescription"
+            label="Description (optional)"
+            density="compact"
+            variant="outlined"
+            hide-details
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn
+            size="small"
+            @click="saveDialogOpen = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            size="small"
+            color="primary"
+            :disabled="!saveName.trim()"
+            @click="confirmSavePreset"
+          >
+            Save
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
