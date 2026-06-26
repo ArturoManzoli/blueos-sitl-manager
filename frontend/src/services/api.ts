@@ -7,6 +7,8 @@ import type {
   LocationPreset,
   OperationResult,
   TeleportRequest,
+  VehiclePreset,
+  VehiclePresetResult,
   VehicleStatus,
   VehicleType,
 } from '@/types/sitl'
@@ -30,6 +32,15 @@ export const VehicleApi = {
   },
   async restart(): Promise<OperationResult> {
     return (await api.post<OperationResult>('/vehicle/restart')).data
+  },
+  async presets(): Promise<VehiclePreset[]> {
+    return (await api.get<VehiclePreset[]>('/vehicle/presets')).data
+  },
+  async applyPreset(name: string): Promise<VehiclePresetResult> {
+    return (await api.post<VehiclePresetResult>(`/vehicle/presets/${encodeURIComponent(name)}`)).data
+  },
+  async activePreset(): Promise<string | null> {
+    return (await api.get<{ name: string | null }>('/vehicle/active-preset')).data.name
   },
 }
 

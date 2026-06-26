@@ -49,6 +49,21 @@ export interface FrameRequest {
 
 export type VehicleType = 'Sub' | 'Rover' | 'Plane' | 'Copter'
 
+export interface VehiclePreset {
+  name: string
+  description: string
+  vehicle: VehicleType
+  frame: string
+  parameters: Record<string, number>
+}
+
+export interface VehiclePresetResult {
+  success: boolean
+  detail: string
+  applied: string[]
+  failed: string[]
+}
+
 export interface OperationResult {
   success: boolean
   detail: string
