@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
+import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
+import BlueSwitch from '@/components/BlueSwitch.vue'
 import MapPicker from '@/components/MapPicker.vue'
 import { notify, notifyError } from '@/composables/notify'
 import { LocationApi } from '@/services/api'
@@ -12,6 +14,13 @@ const disableSimulatedGps = ref(true)
 const busy = ref(false)
 const showLua = ref(false)
 const luaScript = ref('')
+
+const presetButtons = computed(() =>
+  presets.value.map((preset) => ({
+    name: preset.name,
+    onSelected: () => applyPreset(preset),
+  })),
+)
 
 async function loadPresets(): Promise<void> {
   try {
@@ -71,101 +80,79 @@ onMounted(loadPresets)
 </script>
 
 <template>
-  <v-card>
-    <v-card-title>
-      <v-icon class="mr-2">
-        mdi-map-marker
+  <div class="flex flex-col gap-4">
+    <div class="flex items-start gap-2 rounded-[6px] bg-[#0B508733] border border-[#0B508766] text-[#9ecbf0] text-xs px-3 py-2">
+      <v-icon size="16">
+        mdi-information-outline
       </v-icon>
-      Location
-    </v-card-title>
-    <v-card-text>
-      <v-alert
-        type="info"
-        variant="tonal"
-        density="compact"
-        class="mb-4"
-      >
+      <span>
         SITL always boots at the BlueOS default home (Florianópolis). This relocates the
         running vehicle afterwards by moving its EKF origin.
-      </v-alert>
+      </span>
+    </div>
 
-      <div class="text-subtitle-2 mb-2">
-        Presets
-      </div>
-      <div class="d-flex flex-wrap ga-2 mb-4">
-        <v-btn
-          v-for="preset in presets"
-          :key="preset.name"
-          size="small"
-          variant="tonal"
-          @click="applyPreset(preset)"
-        >
-          {{ preset.name }}
-        </v-btn>
-      </div>
+    <BlueButtonGroup
+      v-if="presetButtons.length"
+      label="Presets"
+      theme="dark"
+      type="switch"
+      :button-items="presetButtons"
+    />
 
-      <MapPicker
-        v-model:latitude="location.latitude"
-        v-model:longitude="location.longitude"
-        :heading="location.heading"
-        class="mb-4"
-      />
+    <MapPicker
+      v-model:latitude="location.latitude"
+      v-model:longitude="location.longitude"
+      :heading="location.heading"
+    />
 
-      <v-row dense>
-        <v-col cols="6">
-          <v-text-field
-            v-model.number="location.latitude"
-            label="Latitude"
-            type="number"
-            density="compact"
-            variant="outlined"
-            hide-details
-          />
-        </v-col>
-        <v-col cols="6">
-          <v-text-field
-            v-model.number="location.longitude"
-            label="Longitude"
-            type="number"
-            density="compact"
-            variant="outlined"
-            hide-details
-          />
-        </v-col>
-        <v-col cols="6">
-          <v-text-field
-            v-model.number="location.altitude"
-            label="Altitude (m AMSL)"
-            type="number"
-            density="compact"
-            variant="outlined"
-            hide-details
-          />
-        </v-col>
-        <v-col cols="6">
-          <v-text-field
-            v-model.number="location.heading"
-            label="Heading (°)"
-            type="number"
-            density="compact"
-            variant="outlined"
-            hide-details
-          />
-        </v-col>
-      </v-row>
-
-      <v-checkbox
-        v-model="disableSimulatedGps"
-        label="Disable simulated GPS so the move sticks on the map"
+    <div class="grid grid-cols-2 gap-3">
+      <v-text-field
+        v-model.number="location.latitude"
+        label="Latitude"
+        type="number"
         density="compact"
+        variant="outlined"
         hide-details
-        class="mt-2"
       />
+      <v-text-field
+        v-model.number="location.longitude"
+        label="Longitude"
+        type="number"
+        density="compact"
+        variant="outlined"
+        hide-details
+      />
+      <v-text-field
+        v-model.number="location.altitude"
+        label="Altitude (m AMSL)"
+        type="number"
+        density="compact"
+        variant="outlined"
+        hide-details
+      />
+      <v-text-field
+        v-model.number="location.heading"
+        label="Heading (°)"
+        type="number"
+        density="compact"
+        variant="outlined"
+        hide-details
+      />
+    </div>
 
-      <div class="d-flex ga-2 mt-2">
+    <BlueSwitch
+      v-model="disableSimulatedGps"
+      name="disable-simulated-gps"
+      label="Disable simulated GPS so the move sticks on the map"
+      theme="dark"
+      label-on="Yes"
+      label-off="No"
+    />
+
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <div class="flex gap-2">
         <v-btn
           size="small"
-          variant="text"
           prepend-icon="mdi-crosshairs-gps"
           @click="useBrowserLocation"
         >
@@ -173,24 +160,21 @@ onMounted(loadPresets)
         </v-btn>
         <v-btn
           size="small"
-          variant="text"
           prepend-icon="mdi-language-lua"
           @click="openLua"
         >
           True teleport (Lua)
         </v-btn>
       </div>
-    </v-card-text>
-    <v-card-actions>
-      <v-spacer />
       <v-btn
         color="primary"
+        size="small"
         :loading="busy"
         @click="teleport"
       >
         Apply location
       </v-btn>
-    </v-card-actions>
+    </div>
 
     <v-dialog
       v-model="showLua"
@@ -217,7 +201,7 @@ onMounted(loadPresets)
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </v-card>
+  </div>
 </template>
 
 <style scoped>

@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
+import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
+import BlueSelect from '@/components/BlueSelect.vue'
+import BlueSlider from '@/components/BlueSlider.vue'
 import { notify, notifyError } from '@/composables/notify'
 import { EnvironmentApi } from '@/services/api'
 import type { Environment, EnvironmentPreset } from '@/types/sitl'
@@ -25,10 +28,18 @@ const presets = ref<EnvironmentPreset[]>([])
 const busy = ref(false)
 
 const waveModes = [
-  { title: 'Disabled', value: 0 },
-  { title: 'Roll & pitch', value: 1 },
-  { title: 'Roll, pitch & heave', value: 2 },
+  { name: 'Disabled', value: 0 },
+  { name: 'Roll & pitch', value: 1 },
+  { name: 'Roll, pitch & heave', value: 2 },
 ]
+
+const presetButtons = computed(() =>
+  presets.value.map((preset) => ({
+    name: preset.name,
+    tooltip: preset.description,
+    onSelected: () => applyPreset(preset),
+  })),
+)
 
 async function loadPresets(): Promise<void> {
   try {
@@ -68,150 +79,127 @@ async function applyPreset(preset: EnvironmentPreset): Promise<void> {
   }
 }
 
+const metersPerSecond = (value: number): string => `${value.toFixed(1)} m/s`
+const degrees = (value: number): string => `${value.toFixed(0)}°`
+const meters = (value: number): string => `${value.toFixed(1)} m`
+const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
+
 onMounted(loadPresets)
 </script>
 
 <template>
-  <v-card>
-    <v-card-title>
-      <v-icon class="mr-2">
-        mdi-weather-windy
-      </v-icon>
-      Ambient conditions
-    </v-card-title>
-    <v-card-text>
-      <div class="text-subtitle-2 mb-2">
-        Presets
-      </div>
-      <div class="d-flex flex-wrap ga-2 mb-4">
-        <v-btn
-          v-for="preset in presets"
-          :key="preset.name"
-          size="small"
-          variant="tonal"
-          :loading="busy"
-          @click="applyPreset(preset)"
-        >
-          <v-tooltip
-            activator="parent"
-            location="top"
-          >
-            {{ preset.description }}
-          </v-tooltip>
-          {{ preset.name }}
-        </v-btn>
-      </div>
+  <div class="flex flex-col gap-5">
+    <BlueButtonGroup
+      v-if="presetButtons.length"
+      label="Presets"
+      theme="dark"
+      type="switch"
+      :button-items="presetButtons"
+    />
 
-      <v-divider class="mb-4" />
-
-      <div class="text-subtitle-2 mb-2">
+    <div>
+      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3">
         Wind
       </div>
-      <v-slider
-        v-model="environment.wind_speed"
-        label="Speed"
-        :min="0"
-        :max="30"
-        :step="0.5"
-        thumb-label
-        density="compact"
-      >
-        <template #append>
-          <span class="text-caption">{{ environment.wind_speed }} m/s</span>
-        </template>
-      </v-slider>
-      <v-slider
-        v-model="environment.wind_direction"
-        label="Direction"
-        :min="0"
-        :max="360"
-        :step="1"
-        thumb-label
-        density="compact"
-      >
-        <template #append>
-          <span class="text-caption">{{ environment.wind_direction }}°</span>
-        </template>
-      </v-slider>
-      <v-slider
-        v-model="environment.wind_turbulence"
-        label="Turbulence"
-        :min="0"
-        :max="1"
-        :step="0.05"
-        thumb-label
-        density="compact"
-      />
+      <div class="flex flex-col gap-3">
+        <BlueSlider
+          v-model="environment.wind_speed"
+          name="wind-speed"
+          label="Speed"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="30"
+          :step="0.5"
+          :format-display="metersPerSecond"
+        />
+        <BlueSlider
+          v-model="environment.wind_direction"
+          name="wind-direction"
+          label="Direction"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="360"
+          :step="1"
+          :format-display="degrees"
+        />
+        <BlueSlider
+          v-model="environment.wind_turbulence"
+          name="wind-turbulence"
+          label="Turbulence"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="1"
+          :step="0.05"
+        />
+      </div>
+    </div>
 
-      <v-divider class="my-3" />
-
-      <div class="text-subtitle-2 mb-2">
+    <div>
+      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3">
         Waves &amp; current
       </div>
-      <v-select
-        v-model="environment.wave_enable"
-        :items="waveModes"
-        label="Wave mode"
-        density="compact"
-        variant="outlined"
-        hide-details
-        class="mb-3"
-      />
-      <v-slider
-        v-model="environment.wave_amplitude"
-        label="Wave amplitude"
-        :min="0"
-        :max="3"
-        :step="0.1"
-        thumb-label
-        density="compact"
-      >
-        <template #append>
-          <span class="text-caption">{{ environment.wave_amplitude }} m</span>
-        </template>
-      </v-slider>
-      <v-slider
-        v-model="environment.tide_speed"
-        label="Current speed"
-        :min="0"
-        :max="3"
-        :step="0.1"
-        thumb-label
-        density="compact"
-      >
-        <template #append>
-          <span class="text-caption">{{ environment.tide_speed }} m/s</span>
-        </template>
-      </v-slider>
+      <div class="flex flex-col gap-3">
+        <BlueSelect
+          v-model="environment.wave_enable"
+          label="Wave mode"
+          theme="dark"
+          width="200px"
+          :items="waveModes"
+        />
+        <BlueSlider
+          v-model="environment.wave_amplitude"
+          name="wave-amplitude"
+          label="Wave amplitude"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="3"
+          :step="0.1"
+          :format-display="meters"
+        />
+        <BlueSlider
+          v-model="environment.tide_speed"
+          name="current-speed"
+          label="Current speed"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="3"
+          :step="0.1"
+          :format-display="metersPerSecond"
+        />
+      </div>
+    </div>
 
-      <v-divider class="my-3" />
-
-      <div class="text-subtitle-2 mb-2">
+    <div>
+      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3">
         Simulation
       </div>
-      <v-slider
+      <BlueSlider
         v-model="environment.speedup"
+        name="speedup"
         label="Speed-up"
+        theme="dark"
+        width="380px"
         :min="0.1"
         :max="10"
         :step="0.1"
-        thumb-label
-        density="compact"
-      >
-        <template #append>
-          <span class="text-caption">{{ environment.speedup }}×</span>
-        </template>
-      </v-slider>
-    </v-card-text>
-    <v-card-actions>
-      <v-spacer />
+        :format-display="speedupLabel"
+      />
+    </div>
+
+    <div class="flex justify-end">
       <v-btn
+        size="small"
         color="primary"
         :loading="busy"
         @click="apply"
       >
         Apply conditions
       </v-btn>
-    </v-card-actions>
-  </v-card>
+    </div>
+  </div>
 </template>
