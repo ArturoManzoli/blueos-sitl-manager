@@ -1,14 +1,13 @@
 import axios from 'axios'
 
 import type {
+  ApplyJob,
   Environment,
   EnvironmentPreset,
-  FrameRequest,
   LocationPreset,
   OperationResult,
   SitlLocation,
   VehiclePreset,
-  VehiclePresetResult,
   VehicleStatus,
   VehicleType,
 } from '@/types/sitl'
@@ -24,20 +23,25 @@ export const VehicleApi = {
   async frames(): Promise<string[]> {
     return (await api.get<string[]>('/vehicle/frames')).data
   },
-  async setFrame(request: FrameRequest): Promise<OperationResult> {
-    return (await api.post<OperationResult>('/vehicle/frame', request)).data
+  // Configuration changes run as a background job on the backend; these start one and
+  // return its first snapshot, which callers then poll through applyJob().
+  async setFrame(frame: string): Promise<ApplyJob> {
+    return (await api.post<ApplyJob>('/vehicle/frame', { frame })).data
   },
-  async setType(vehicle: VehicleType): Promise<OperationResult> {
-    return (await api.post<OperationResult>('/vehicle/type', { vehicle })).data
+  async setType(vehicle: VehicleType): Promise<ApplyJob> {
+    return (await api.post<ApplyJob>('/vehicle/type', { vehicle })).data
+  },
+  async applyPreset(name: string): Promise<ApplyJob> {
+    return (await api.post<ApplyJob>(`/vehicle/presets/${encodeURIComponent(name)}/apply`)).data
+  },
+  async applyJob(): Promise<ApplyJob | null> {
+    return (await api.get<ApplyJob | null>('/vehicle/apply-job')).data
   },
   async restart(): Promise<OperationResult> {
     return (await api.post<OperationResult>('/vehicle/restart')).data
   },
   async presets(): Promise<VehiclePreset[]> {
     return (await api.get<VehiclePreset[]>('/vehicle/presets')).data
-  },
-  async applyPreset(name: string): Promise<VehiclePresetResult> {
-    return (await api.post<VehiclePresetResult>(`/vehicle/presets/${encodeURIComponent(name)}`)).data
   },
   async activePreset(): Promise<string | null> {
     return (await api.get<{ name: string | null }>('/vehicle/active-preset')).data.name

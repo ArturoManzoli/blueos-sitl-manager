@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
+import ApplyProgressDialog from '@/components/ApplyProgressDialog.vue'
 import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
 import BlueSelect from '@/components/BlueSelect.vue'
-import BlueSwitch from '@/components/BlueSwitch.vue'
 import { hideLoading, showLoading } from '@/composables/loading'
 import { notify, notifyError } from '@/composables/notify'
 import { VehicleApi } from '@/services/api'
-import type { VehiclePreset, VehicleType } from '@/types/sitl'
+import type { ApplyJob, VehiclePreset, VehicleType } from '@/types/sitl'
 
 const emit = defineEmits<{ (event: 'changed'): void }>()
 
@@ -25,8 +25,12 @@ const frames = ref<string[]>([])
 const presets = ref<VehiclePreset[]>([])
 const selectedFrame = ref<string | null>(null)
 const selectedVehicle = ref<VehicleType>('Sub')
-const restartOnFrameChange = ref(true)
 const busy = ref(false)
+// The selectors apply on change, so they are also written from the running vehicle's
+// state. This guards the watchers from firing on those programmatic updates.
+const syncing = ref(false)
+const progressJob = ref<ApplyJob | null>(null)
+const progressOpen = ref(false)
 // Which preset the running vehicle matches; 'Custom' when it matches none.
 const activePresetName = ref<string>(CUSTOM_PRESET)
 // The last preset the user explicitly applied via the button group. Detection only sees
@@ -116,6 +120,7 @@ function vehicleTypeFromFirmware(firmware: string | null): VehicleType | null {
 
 // Mirror the manual-configuration fields onto whatever the vehicle currently runs.
 async function syncFromStatus(): Promise<void> {
+  syncing.value = true
   try {
     const status = await VehicleApi.status()
     const vehicle = vehicleTypeFromFirmware(status.firmware_vehicle_type)
@@ -127,6 +132,9 @@ async function syncFromStatus(): Promise<void> {
     }
   } catch {
     // Status is surfaced (and its errors reported) by the StatusPanel; stay quiet here.
+  } finally {
+    await nextTick()
+    syncing.value = false
   }
 }
 
@@ -136,61 +144,60 @@ async function refresh(): Promise<void> {
 
 defineExpose({ refresh })
 
+// Every configuration change runs as a backend job; start it, then hand the first
+// snapshot to the progress dialog, which polls the rest.
+async function startJob(start: () => Promise<ApplyJob>, failureMessage: string): Promise<boolean> {
+  busy.value = true
+  try {
+    progressJob.value = await start()
+    progressOpen.value = true
+    return true
+  } catch (error) {
+    notifyError(error, failureMessage)
+    busy.value = false
+    return false
+  }
+}
+
 async function applyPreset(preset: VehiclePreset): Promise<void> {
-  busy.value = true
-  showLoading(`Applying ${preset.name}… the autopilot will restart, this can take up to a minute.`)
-  try {
-    const result = await VehicleApi.applyPreset(preset.name)
-    notify(result.detail, result.success ? 'success' : 'warning')
-    activePresetName.value = result.success ? preset.name : CUSTOM_PRESET
-    explicitPresetName.value = result.success ? preset.name : null
-    emit('changed')
-  } catch (error) {
-    notifyError(error, `Could not apply ${preset.name}`)
-  } finally {
-    busy.value = false
-    hideLoading()
+  if (await startJob(() => VehicleApi.applyPreset(preset.name), `Could not apply ${preset.name}`)) {
+    activePresetName.value = preset.name
+    explicitPresetName.value = preset.name
   }
 }
 
-async function applyFrame(): Promise<void> {
-  if (!selectedFrame.value) {
-    return
-  }
-  busy.value = true
-  if (restartOnFrameChange.value) {
-    showLoading('Applying frame… the autopilot will restart.')
-  }
-  try {
-    const result = await VehicleApi.setFrame({ frame: selectedFrame.value, restart: restartOnFrameChange.value })
-    notify(result.detail, 'success')
+async function applyFrame(frame: string): Promise<void> {
+  if (await startJob(() => VehicleApi.setFrame(frame), 'Could not set frame')) {
     activePresetName.value = CUSTOM_PRESET
     explicitPresetName.value = null
-    emit('changed')
-  } catch (error) {
-    notifyError(error, 'Could not set frame')
-  } finally {
-    busy.value = false
-    hideLoading()
   }
 }
 
-async function applyVehicle(): Promise<void> {
-  busy.value = true
-  showLoading('Switching vehicle… installing firmware and restarting the autopilot.')
-  try {
-    const result = await VehicleApi.setType(selectedVehicle.value)
-    notify(result.detail, 'success')
+async function applyVehicle(vehicle: VehicleType): Promise<void> {
+  if (await startJob(() => VehicleApi.setType(vehicle), 'Could not switch vehicle type')) {
     activePresetName.value = CUSTOM_PRESET
     explicitPresetName.value = null
-    emit('changed')
-  } catch (error) {
-    notifyError(error, 'Could not switch vehicle type')
-  } finally {
-    busy.value = false
-    hideLoading()
   }
 }
+
+async function onJobFinished(job: ApplyJob): Promise<void> {
+  busy.value = false
+  notify(job.detail, job.state === 'succeeded' ? 'success' : 'warning')
+  await refresh()
+  emit('changed')
+}
+
+watch(selectedVehicle, (vehicle, previous) => {
+  if (!syncing.value && previous && vehicle !== previous) {
+    applyVehicle(vehicle)
+  }
+})
+
+watch(selectedFrame, (frame, previous) => {
+  if (!syncing.value && previous && frame && frame !== previous) {
+    applyFrame(frame)
+  }
+})
 
 function openSaveDialog(): void {
   saveName.value = ''
@@ -358,43 +365,25 @@ onMounted(() => {
       label="Vehicle type"
       theme="dark"
       width="200px"
+      :disabled="busy"
       :items="vehicleItems"
+      info-tooltip="Applied on selection: installs the matching SITL firmware and restarts the autopilot."
     />
     <BlueSelect
       v-model="selectedFrame"
       label="SITL frame"
       theme="dark"
       width="200px"
+      :disabled="busy"
       :items="frameItems"
-    />
-    <BlueSwitch
-      v-model="restartOnFrameChange"
-      name="restart-on-frame-change"
-      label="Restart autopilot after applying"
-      theme="dark"
-      label-on="Yes"
-      label-off="No"
-      info-tooltip="Switching vehicle type installs the matching SITL firmware and restarts the autopilot. The SITL frame only takes effect after a restart."
+      info-tooltip="Applied on selection. The frame supplies the simulated physics and only takes effect after the autopilot restarts."
     />
 
-    <div class="flex justify-end gap-2">
-      <v-btn
-        size="small"
-        :loading="busy"
-        @click="applyVehicle"
-      >
-        Switch vehicle
-      </v-btn>
-      <v-btn
-        size="small"
-        color="primary"
-        :loading="busy"
-        :disabled="!selectedFrame"
-        @click="applyFrame"
-      >
-        Apply frame
-      </v-btn>
-    </div>
+    <ApplyProgressDialog
+      v-model="progressOpen"
+      :initial="progressJob"
+      @finished="onJobFinished"
+    />
 
     <v-dialog
       v-model="saveDialogOpen"

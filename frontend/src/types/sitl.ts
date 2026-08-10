@@ -39,11 +39,6 @@ export interface VehicleStatus {
   firmware_version: string | null
 }
 
-export interface FrameRequest {
-  frame: string
-  restart: boolean
-}
-
 export type VehicleType = 'Sub' | 'Rover' | 'Plane' | 'Copter'
 
 export interface VehiclePreset {
@@ -56,11 +51,40 @@ export interface VehiclePreset {
   builtin?: boolean | null
 }
 
-export interface VehiclePresetResult {
-  success: boolean
+export type StepState = 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+
+export interface ApplyStep {
+  key: string
+  title: string
+  state: StepState
   detail: string
-  applied: string[]
-  failed: string[]
+}
+
+// 'unchanged': the vehicle already held the value, so nothing was sent.
+// 'unsupported': the running firmware does not have the parameter at all.
+export type ParamOutcome = 'written' | 'unchanged' | 'unsupported' | 'failed'
+
+export interface ParamRecord {
+  name: string
+  value: number
+  outcome: ParamOutcome
+}
+
+export type JobState = 'running' | 'succeeded' | 'failed'
+
+// Progress of a configuration change, polled while the dialog is open.
+export interface ApplyJob {
+  id: number
+  title: string
+  state: JobState
+  detail: string
+  steps: ApplyStep[]
+  params_total: number
+  params_done: number
+  current_param: string | null
+  records: ParamRecord[]
+  counts: Partial<Record<ParamOutcome, number>>
+  reported_vehicle: string | null
 }
 
 export interface OperationResult {
