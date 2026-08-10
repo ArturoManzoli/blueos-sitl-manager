@@ -56,6 +56,8 @@ export interface VehiclePreset {
   vehicle: VehicleType
   frame: string
   parameters: Record<string, number>
+  // Set by the preset list endpoint: true for built-ins, false for deletable customs.
+  builtin?: boolean | null
 }
 
 export interface VehiclePresetResult {

@@ -52,6 +52,9 @@ export const VehicleApi = {
   async importPreset(preset: VehiclePreset): Promise<VehiclePreset> {
     return (await api.post<VehiclePreset>('/vehicle/presets/import', preset)).data
   },
+  async deletePreset(name: string): Promise<OperationResult> {
+    return (await api.delete<OperationResult>(`/vehicle/presets/${encodeURIComponent(name)}`)).data
+  },
 }
 
 export const EnvironmentApi = {

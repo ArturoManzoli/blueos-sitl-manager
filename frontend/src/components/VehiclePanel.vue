@@ -29,6 +29,11 @@ const restartOnFrameChange = ref(true)
 const busy = ref(false)
 // Which preset the running vehicle matches; 'Custom' when it matches none.
 const activePresetName = ref<string>(CUSTOM_PRESET)
+// The last preset the user explicitly applied via the button group. Detection only sees
+// built-in presets (a custom preset is a full dump of the built-in it derives from and
+// shares its frame-defining parameter), so without this it would downgrade an applied
+// custom preset to its built-in cousin and hide the delete action.
+const explicitPresetName = ref<string | null>(null)
 
 const presetMenuOpen = ref(false)
 const saveDialogOpen = ref(false)
@@ -64,6 +69,11 @@ const presetButtons = computed<PresetButton[]>(() => {
   return buttons
 })
 
+// Only user-saved/imported presets carry builtin === false and can be deleted.
+const activePresetIsCustom = computed(
+  () => presets.value.find((preset) => preset.name === activePresetName.value)?.builtin === false
+)
+
 async function loadFrames(): Promise<void> {
   try {
     frames.value = await VehicleApi.frames()
@@ -82,7 +92,14 @@ async function loadPresets(): Promise<void> {
 
 async function loadActivePreset(): Promise<void> {
   try {
-    activePresetName.value = (await VehicleApi.activePreset()) ?? CUSTOM_PRESET
+    const detected = (await VehicleApi.activePreset()) ?? CUSTOM_PRESET
+    // Honor an explicitly-applied custom preset over detection, which cannot recognize it.
+    const explicit = presets.value.find((preset) => preset.name === explicitPresetName.value)
+    if (explicit?.builtin === false) {
+      activePresetName.value = explicit.name
+      return
+    }
+    activePresetName.value = detected
   } catch {
     activePresetName.value = CUSTOM_PRESET
   }
@@ -126,6 +143,7 @@ async function applyPreset(preset: VehiclePreset): Promise<void> {
     const result = await VehicleApi.applyPreset(preset.name)
     notify(result.detail, result.success ? 'success' : 'warning')
     activePresetName.value = result.success ? preset.name : CUSTOM_PRESET
+    explicitPresetName.value = result.success ? preset.name : null
     emit('changed')
   } catch (error) {
     notifyError(error, `Could not apply ${preset.name}`)
@@ -147,6 +165,7 @@ async function applyFrame(): Promise<void> {
     const result = await VehicleApi.setFrame({ frame: selectedFrame.value, restart: restartOnFrameChange.value })
     notify(result.detail, 'success')
     activePresetName.value = CUSTOM_PRESET
+    explicitPresetName.value = null
     emit('changed')
   } catch (error) {
     notifyError(error, 'Could not set frame')
@@ -163,6 +182,7 @@ async function applyVehicle(): Promise<void> {
     const result = await VehicleApi.setType(selectedVehicle.value)
     notify(result.detail, 'success')
     activePresetName.value = CUSTOM_PRESET
+    explicitPresetName.value = null
     emit('changed')
   } catch (error) {
     notifyError(error, 'Could not switch vehicle type')
@@ -213,6 +233,22 @@ async function downloadPreset(): Promise<void> {
     triggerDownload(await VehicleApi.currentConfig())
   } catch (error) {
     notifyError(error, 'Could not export configuration')
+  } finally {
+    hideLoading()
+  }
+}
+
+async function deleteActivePreset(): Promise<void> {
+  const name = activePresetName.value
+  showLoading(`Deleting preset "${name}"…`)
+  try {
+    await VehicleApi.deletePreset(name)
+    explicitPresetName.value = null
+    await loadPresets()
+    await loadActivePreset()
+    notify(`Deleted preset "${name}".`, 'success')
+  } catch (error) {
+    notifyError(error, 'Could not delete preset')
   } finally {
     hideLoading()
   }
@@ -297,6 +333,15 @@ onMounted(() => {
             title="Import preset file"
             @click="importInput?.click()"
           />
+          <template v-if="activePresetIsCustom">
+            <div class="h-px bg-[#ffffff0d]" />
+            <v-list-item
+              prepend-icon="mdi-delete-outline"
+              title="Delete this preset"
+              base-color="#ff6b6b"
+              @click="deleteActivePreset"
+            />
+          </template>
         </v-list>
       </v-menu>
       <input
