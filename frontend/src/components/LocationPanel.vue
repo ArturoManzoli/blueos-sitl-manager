@@ -2,23 +2,24 @@
 import { computed, onMounted, ref } from 'vue'
 
 import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
-import BlueSwitch from '@/components/BlueSwitch.vue'
 import MapPicker from '@/components/MapPicker.vue'
+import { hideLoading, showLoading } from '@/composables/loading'
 import { notify, notifyError } from '@/composables/notify'
 import { LocationApi } from '@/services/api'
 import type { LocationPreset, SitlLocation } from '@/types/sitl'
 
+const emit = defineEmits<{ (event: 'changed'): void }>()
+
 const location = ref<SitlLocation>({ latitude: -27.563, longitude: -48.459, altitude: 0, heading: 270 })
 const presets = ref<LocationPreset[]>([])
-const disableSimulatedGps = ref(true)
 const busy = ref(false)
-const showLua = ref(false)
-const luaScript = ref('')
 
 const presetButtons = computed(() =>
   presets.value.map((preset) => ({
     name: preset.name,
-    onSelected: () => applyPreset(preset),
+    onSelected: () => {
+      location.value = { ...preset.location }
+    },
   })),
 )
 
@@ -30,9 +31,16 @@ async function loadPresets(): Promise<void> {
   }
 }
 
-function applyPreset(preset: LocationPreset): void {
-  location.value = { ...preset.location }
+// Show where the vehicle is actually configured to spawn rather than a hardcoded guess.
+async function refresh(): Promise<void> {
+  try {
+    location.value = await LocationApi.get()
+  } catch (error) {
+    notifyError(error, 'Could not read the spawn location')
+  }
 }
+
+defineExpose({ refresh })
 
 function useBrowserLocation(): void {
   if (!navigator.geolocation) {
@@ -52,51 +60,37 @@ function useBrowserLocation(): void {
   )
 }
 
-async function teleport(): Promise<void> {
+async function applyLocation(): Promise<void> {
   busy.value = true
+  showLoading('Applying spawn location… the autopilot will restart, this can take up to a minute.')
   try {
-    const result = await LocationApi.teleport({
-      location: location.value,
-      disable_simulated_gps: disableSimulatedGps.value,
-    })
-    notify(result.detail, 'success')
+    const result = await LocationApi.set(location.value)
+    notify(result.detail, result.success ? 'success' : 'warning')
+    emit('changed')
   } catch (error) {
-    notifyError(error, 'Teleport failed')
+    notifyError(error, 'Could not set the spawn location')
   } finally {
     busy.value = false
+    hideLoading()
   }
 }
 
-async function openLua(): Promise<void> {
-  try {
-    luaScript.value = await LocationApi.luaScript()
-    showLua.value = true
-  } catch (error) {
-    notifyError(error, 'Could not load the Lua helper')
-  }
-}
-
-onMounted(loadPresets)
+onMounted(() => {
+  loadPresets()
+  refresh()
+})
 </script>
 
 <template>
   <div class="flex flex-col gap-4">
-    <div class="flex items-start gap-2 rounded-[6px] bg-[#0B508733] border border-[#0B508766] text-[#9ecbf0] text-xs px-3 py-2">
-      <v-icon size="16">
-        mdi-information-outline
-      </v-icon>
-      <span>
-        SITL always boots at the BlueOS default home (Florianópolis). This relocates the
-        running vehicle afterwards by moving its EKF origin.
-      </span>
-    </div>
-
     <BlueButtonGroup
       v-if="presetButtons.length"
       label="Presets"
       theme="dark"
       type="switch"
+      :disabled="busy"
       :button-items="presetButtons"
+      info-tooltip="Applying writes the spawn location to the vehicle's SIM_OPOS_* parameters and restarts the autopilot. SITL then boots here every time, until you change it again."
     />
 
     <MapPicker
@@ -140,78 +134,23 @@ onMounted(loadPresets)
       />
     </div>
 
-    <BlueSwitch
-      v-model="disableSimulatedGps"
-      name="disable-simulated-gps"
-      label="Disable simulated GPS so the move sticks on the map"
-      theme="dark"
-      label-on="Yes"
-      label-off="No"
-    />
-
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <div class="flex gap-2">
-        <v-btn
-          size="small"
-          prepend-icon="mdi-crosshairs-gps"
-          @click="useBrowserLocation"
-        >
-          Use my location
-        </v-btn>
-        <v-btn
-          size="small"
-          prepend-icon="mdi-language-lua"
-          @click="openLua"
-        >
-          True teleport (Lua)
-        </v-btn>
-      </div>
+    <div class="flex items-center justify-between gap-2">
+      <v-btn
+        size="small"
+        prepend-icon="mdi-crosshairs-gps"
+        :disabled="busy"
+        @click="useBrowserLocation"
+      >
+        Use my location
+      </v-btn>
       <v-btn
         color="primary"
         size="small"
         :loading="busy"
-        @click="teleport"
+        @click="applyLocation"
       >
-        Apply location
+        Apply and restart
       </v-btn>
     </div>
-
-    <v-dialog
-      v-model="showLua"
-      max-width="760"
-    >
-      <v-card>
-        <v-card-title>Lua sim:set_pose teleport helper</v-card-title>
-        <v-card-text>
-          <p class="mb-3 text-body-2">
-            For a GPS-preserving teleport, enable scripting (<code>SCR_ENABLE = 1</code>),
-            drop this script into the autopilot's <code>scripts/</code> folder, and restart.
-            The extension writes <code>SIM_OPOS_*</code> over MAVLink for the script to read.
-          </p>
-          <pre class="lua-block">{{ luaScript }}</pre>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn
-            variant="text"
-            @click="showLua = false"
-          >
-            Close
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
-
-<style scoped>
-.lua-block {
-  background: rgba(0, 0, 0, 0.35);
-  padding: 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  max-height: 360px;
-  overflow: auto;
-  white-space: pre-wrap;
-}
-</style>

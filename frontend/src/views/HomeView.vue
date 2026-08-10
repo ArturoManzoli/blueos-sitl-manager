@@ -9,15 +9,17 @@ import VehiclePanel from '@/components/VehiclePanel.vue'
 
 const statusPanel = ref<InstanceType<typeof StatusPanel> | null>(null)
 const vehiclePanel = ref<InstanceType<typeof VehiclePanel> | null>(null)
+const locationPanel = ref<InstanceType<typeof LocationPanel> | null>(null)
 const environmentPanel = ref<InstanceType<typeof EnvironmentPanel> | null>(null)
 const refreshing = ref(false)
 
-// A vehicle change can move every field (type, frame, conditions), so re-read them all
-// from the vehicle rather than trusting the local form state.
+// A vehicle change can move every field (type, frame, spawn point, conditions), so
+// re-read them all from the vehicle rather than trusting the local form state.
 async function onVehicleChanged(): Promise<void> {
   await Promise.all([
     statusPanel.value?.refresh(),
     vehiclePanel.value?.refresh(),
+    locationPanel.value?.refresh(),
     environmentPanel.value?.refresh(),
   ])
 }
@@ -66,11 +68,14 @@ async function refreshAll(): Promise<void> {
       </ExpansiblePanel>
 
       <ExpansiblePanel
-        title="Location"
+        title="Spawn location"
         theme="dark"
         :expanded="true"
       >
-        <LocationPanel />
+        <LocationPanel
+          ref="locationPanel"
+          @changed="onVehicleChanged"
+        />
       </ExpansiblePanel>
 
       <ExpansiblePanel
