@@ -17,31 +17,99 @@ from sitl_manager.settings import (
 )
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
+VENDOR_DIR = DATA_DIR / "vendor"
 
 # Parameter families owned by the ambient-conditions and location features. They are
 # stripped from vehicle presets so applying a preset never clobbers the simulated
 # environment (wind/waves/tide) or the spawn location the user set.
 PRESET_EXCLUDED_PREFIXES: Tuple[str, ...] = ("SIM_",)
 
+# Per-board calibration and identity values, which describe the machine a parameter dump
+# was taken from rather than the vehicle it configures. Copied verbatim from the vendor
+# repository so presets stay in step with what Blue Robotics refuses to transfer.
+BLACKLIST: Tuple[str, ...] = tuple(
+    line.strip() for line in (VENDOR_DIR / "blacklist.txt").read_text().splitlines() if line.strip()
+)
 
-def load_parm_file(path: Path, exclude_prefixes: Tuple[str, ...] = PRESET_EXCLUDED_PREFIXES) -> Dict[str, float]:
-    """Parse an ArduPilot ``.parm`` dump into a name->value map.
+# Settings that describe real hardware and would misconfigure or break SITL: IMU
+# orientation and position (the simulated IMU sits level at the origin), analog pins and
+# scaling for a power sense module SITL simulates itself, I2C/serial buses and scripting
+# storage that do not exist, and per-output wiring trims that would reverse a simulated
+# thruster. These are dropped from vehicle layers only — a SITL layer that sets one of
+# them is stating the value the simulator wants, so it is honoured.
+HARDWARE_PARAMS: Tuple[str, ...] = (
+    "AHRS_ORIENTATION",
+    "BARO_EXT_BUS",
+    "BATT_AMP_OFFSET",
+    "BATT_AMP_PERVLT",
+    "BATT_CURR_PIN",
+    "BATT_VOLT_MULT",
+    "BATT_VOLT_PIN",
+    "EK3_IMU_MASK",
+    "GPS_AUTO_SWITCH",
+    "GPS_NAVFILTER",
+    "GPS_SAVE_CFG",
+    "RC_OPTIONS",
+    "WNDVN_TYPE",
+)
+HARDWARE_PREFIXES: Tuple[str, ...] = (
+    "BRD_",
+    "CAN_",
+    "EAHRS_",
+    "GPS1_COM",
+    "GPS1_POS",
+    "INS_POS",
+    "MSP_",
+    "RELAY",
+    "SCR_",
+    "SERIAL",
+)
+HARDWARE_SUFFIXES: Tuple[str, ...] = ("_REVERSED", "_TRIM")
 
-    Lines are ``NAME   VALUE`` with ``#`` comments; blank lines, comments and any
-    parameter whose name starts with an excluded prefix are skipped.
+
+def _is_hardware_param(name: str) -> bool:
+    return name in HARDWARE_PARAMS or name.startswith(HARDWARE_PREFIXES) or name.endswith(HARDWARE_SUFFIXES)
+
+
+def load_params(path: Path, drop_hardware: bool = True) -> Dict[str, float]:
+    """Parse an ArduPilot parameter file into a name->value map.
+
+    Accepts the shapes the vendor repository uses: ``NAME VALUE``, ``NAME: VALUE,`` and
+    ``NAME, VALUE``, with ``#`` or ``//`` comments. ``%include`` directives are ignored
+    because callers compose the layers explicitly, which is what makes the precedence
+    between a vehicle and its SITL overlay reviewable.
     """
     params: Dict[str, float] = {}
     for raw_line in path.read_text().splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if not line:
+        line = raw_line.split("#", 1)[0].split("//", 1)[0].strip()
+        if not line or line.startswith("%include"):
             continue
-        parts = line.split()
-        if len(parts) < 2 or parts[0].startswith(exclude_prefixes):
+        parts = line.replace(":", " ").replace(",", " ").split()
+        if len(parts) < 2:
+            continue
+        name = parts[0]
+        if name.startswith(PRESET_EXCLUDED_PREFIXES) or any(entry in name for entry in BLACKLIST):
+            continue
+        if drop_hardware and _is_hardware_param(name):
             continue
         try:
-            params[parts[0]] = float(parts[1])
+            params[name] = float(parts[1])
         except ValueError:
             continue
+    return params
+
+
+def compose_params(vehicle_layers: List[Path], sitl_layers: List[Path]) -> Dict[str, float]:
+    """Merge parameter layers into one set, with the SITL layers applied last.
+
+    Where a vehicle layer and a SITL layer both define a parameter the SITL value wins,
+    since it is the one the simulator was tuned with.
+    """
+    params: Dict[str, float] = {}
+    for path in vehicle_layers:
+        params.update(load_params(path))
+    for path in sitl_layers:
+        params.update(load_params(path, drop_hardware=False))
     return params
 
 
@@ -143,63 +211,43 @@ LOCATION_PRESETS: List[LocationPreset] = [
     LocationPreset(name="Equator origin", location=Location(latitude=0.0, longitude=0.0, heading=0)),
 ]
 
-# ArduPilot servo output functions used by the ROV presets below.
-# 33..40 = Motor1..Motor8 (ArduSub), 59/60 = RCIN9/RCIN10 (BlueROV2 lights).
-# The SITL --frame supplies the hydrodynamics; the parameters capture the defining
-# configuration so the simulated vehicle matches the real product. The BlueBoat set is
-# the full reference dump loaded from data/blueboat.parm (minus the SIM_* family); the
-# ROV sets remain a curated baseline that is safe to extend.
+# The Blue Robotics presets are composed from the parameter layers Blue Robotics ships in
+# bluerobotics/Blueos-Parameter-Repository, vendored under data/vendor. Each vehicle is
+# built the way that repository composes it — shared hardware, then the vehicle, then its
+# SITL overlay — so the simulated vehicle is configured like the real product wherever the
+# simulator does not need something else. The SITL --frame supplies the hydrodynamics.
+BLUEBOAT_LAYERS = ([DATA_DIR / "blueboat.params"], [VENDOR_DIR / "rover_sitl.params"])
+BLUEROV2_LAYERS = (
+    [VENDOR_DIR / "sub_power_sense_module.params", VENDOR_DIR / "sub_base.params", VENDOR_DIR / "sub_standard.params"],
+    [VENDOR_DIR / "sub_sitl_standard.params"],
+)
+BLUEROV2_HEAVY_LAYERS = (
+    [VENDOR_DIR / "sub_power_sense_module.params", VENDOR_DIR / "sub_base.params", VENDOR_DIR / "sub_heavy.params"],
+    [VENDOR_DIR / "sub_sitl_heavy.params"],
+)
+
 VEHICLE_PRESETS: List[VehiclePreset] = [
     VehiclePreset(
         name="BlueBoat",
-        description="Blue Robotics BlueBoat — surface vehicle (ArduRover), full reference parameters.",
+        description="Blue Robotics BlueBoat — skid-steered surface vehicle (ArduRover).",
         vehicle=Vehicle.ROVER,
-        frame="rover-skid",
-        parameters=load_parm_file(DATA_DIR / "blueboat.parm"),
+        # Marine hydrodynamics with differential thrust, matching the hull's two thrusters.
+        frame="motorboat-skid",
+        parameters=compose_params(*BLUEBOAT_LAYERS),
     ),
     VehiclePreset(
         name="BlueROV2",
         description="Blue Robotics BlueROV2 — 6-thruster vectored ROV (ArduSub).",
         vehicle=Vehicle.SUB,
         frame="vectored",
-        parameters={
-            "FRAME_CONFIG": 1,  # Vectored
-            "SERVO1_FUNCTION": 33,  # Motor1
-            "SERVO2_FUNCTION": 34,  # Motor2
-            "SERVO3_FUNCTION": 35,  # Motor3
-            "SERVO4_FUNCTION": 36,  # Motor4
-            "SERVO5_FUNCTION": 37,  # Motor5
-            "SERVO6_FUNCTION": 38,  # Motor6
-            "SERVO9_FUNCTION": 59,  # RCIN9 — lights 1
-            "SERVO10_FUNCTION": 60,  # RCIN10 — lights 2
-            "BATT_MONITOR": 4,  # Analog voltage and current
-            "BATT_CAPACITY": 18000,
-            "BATT_VOLT_MULT": 11.0,  # Blue Robotics Power Sense Module
-            "BATT_AMP_PERVLT": 37.8788,
-        },
+        parameters=compose_params(*BLUEROV2_LAYERS),
     ),
     VehiclePreset(
         name="BlueROV2 Heavy",
         description="Blue Robotics BlueROV2 Heavy — 8-thruster fully vectored 6-DOF ROV (ArduSub).",
         vehicle=Vehicle.SUB,
         frame="vectored_6dof",
-        parameters={
-            "FRAME_CONFIG": 2,  # Vectored 6DOF
-            "SERVO1_FUNCTION": 33,  # Motor1
-            "SERVO2_FUNCTION": 34,  # Motor2
-            "SERVO3_FUNCTION": 35,  # Motor3
-            "SERVO4_FUNCTION": 36,  # Motor4
-            "SERVO5_FUNCTION": 37,  # Motor5
-            "SERVO6_FUNCTION": 38,  # Motor6
-            "SERVO7_FUNCTION": 39,  # Motor7
-            "SERVO8_FUNCTION": 40,  # Motor8
-            "SERVO9_FUNCTION": 59,  # RCIN9 — lights 1
-            "SERVO10_FUNCTION": 60,  # RCIN10 — lights 2
-            "BATT_MONITOR": 4,  # Analog voltage and current
-            "BATT_CAPACITY": 18000,
-            "BATT_VOLT_MULT": 11.0,  # Blue Robotics Power Sense Module
-            "BATT_AMP_PERVLT": 37.8788,
-        },
+        parameters=compose_params(*BLUEROV2_HEAVY_LAYERS),
     ),
     # Generic (non Blue Robotics) ArduPilot vehicles for aerial and ground SITL work.
     # FRAME_CLASS keeps each one distinct from the marine presets above: a ground rover
