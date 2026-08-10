@@ -53,6 +53,30 @@ async def get_firmware_vehicle_type() -> Optional[str]:
         return None
 
 
+async def get_sitl_frame() -> Optional[str]:
+    """The persisted SITL frame. It lives behind its own endpoint, not on the board."""
+    try:
+        frame = await _get("/sitl_frame")
+    except Exception as error:  # noqa: BLE001 - unavailable when no board is running
+        logger.debug(f"sitl_frame unavailable: {error}")
+        return None
+    return str(frame) if frame else None
+
+
+async def get_vehicle_type() -> Optional[str]:
+    """The vehicle type the autopilot reports over MAVLink, e.g. ``Surface Boat``.
+
+    This is what BlueOS and Cockpit use to identify the vehicle, so it is how we confirm a
+    reconfigured SITL really came back as the vehicle the preset asked for.
+    """
+    try:
+        vehicle_type = await _get("/vehicle_type")
+    except Exception as error:  # noqa: BLE001 - unavailable while the autopilot is booting
+        logger.debug(f"vehicle_type unavailable: {error}")
+        return None
+    return str(vehicle_type) if vehicle_type else None
+
+
 async def set_sitl_frame(frame: str) -> None:
     # ArduPilot Manager persists the frame; it only takes effect on the next SITL start.
     await _post("/sitl_frame", params={"frame": frame})

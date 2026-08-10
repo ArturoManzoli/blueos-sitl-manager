@@ -115,7 +115,7 @@ async def _build_current_config_preset(name: str, description: str) -> VehiclePr
             detail="Timed out reading parameters from the autopilot.",
         )
     parameters = {key: value for key, value in parameters.items() if not key.startswith(PRESET_EXCLUDED_PREFIXES)}
-    frame = (board.get("frame") if board else None) or ""
+    frame = await autopilot.get_sitl_frame() or ""
     return VehiclePreset(name=name, description=description, vehicle=vehicle, frame=frame, parameters=parameters)
 
 
@@ -149,7 +149,7 @@ async def status_() -> VehicleStatus:
     return VehicleStatus(
         board=board.get("name") if board else None,
         is_sitl=is_sitl,
-        frame=board.get("frame") if board else None,
+        frame=await autopilot.get_sitl_frame(),
         firmware_vehicle_type=await autopilot.get_firmware_vehicle_type(),
         firmware_version=await mavlink.get_autopilot_version() if is_sitl else None,
     )
