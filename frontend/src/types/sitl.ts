@@ -18,6 +18,7 @@ export interface EnvironmentPreset {
   environment: Environment
 }
 
+// Where SITL spawns, held in the vehicle's SIM_OPOS_* parameters.
 export interface SitlLocation {
   latitude: number
   longitude: number
@@ -28,11 +29,6 @@ export interface SitlLocation {
 export interface LocationPreset {
   name: string
   location: SitlLocation
-}
-
-export interface TeleportRequest {
-  location: SitlLocation
-  disable_simulated_gps: boolean
 }
 
 export interface VehicleStatus {

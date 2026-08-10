@@ -6,7 +6,7 @@ import type {
   FrameRequest,
   LocationPreset,
   OperationResult,
-  TeleportRequest,
+  SitlLocation,
   VehiclePreset,
   VehiclePresetResult,
   VehicleStatus,
@@ -76,10 +76,12 @@ export const LocationApi = {
   async presets(): Promise<LocationPreset[]> {
     return (await api.get<LocationPreset[]>('/location/presets')).data
   },
-  async teleport(request: TeleportRequest): Promise<OperationResult> {
-    return (await api.post<OperationResult>('/location/teleport', request)).data
+  async get(): Promise<SitlLocation> {
+    return (await api.get<SitlLocation>('/location')).data
   },
-  async luaScript(): Promise<string> {
-    return (await api.get<string>('/location/lua-script')).data
+  // Restarts the autopilot and waits for it to report the new position; callers show a
+  // loader for it.
+  async set(location: SitlLocation): Promise<OperationResult> {
+    return (await api.post<OperationResult>('/location', location)).data
   },
 }
