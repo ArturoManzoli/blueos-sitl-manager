@@ -9,13 +9,46 @@ Firmware page, the Parameter Editor and MAVProxy.
 
 ## What it does
 
-- **Vehicle & frame** — switch the SITL vehicle type (Sub / Rover / Plane / Copter) and
-  frame (`vectored`, `motorboat`, `sailboat`, …) via the ArduPilot Manager API, with an
-  optional autopilot restart.
+- **Vehicle presets** — one click turns SITL into a BlueBoat, BlueROV2 or BlueROV2 Heavy
+  (plus generic rover, copter and plane), installing the firmware, setting the SITL frame
+  and writing the vehicle's parameters. See below.
+- **Vehicle & frame** — the vehicle type (Sub / Rover / Plane / Copter) and SITL frame
+  selectors apply on selection, through the same job and progress dialog as a preset.
 - **Ambient conditions** — set ArduPilot `SIM_*` parameters (`SIM_WIND_*`, `SIM_WAVE_*`,
   `SIM_TIDE_*`, `SIM_SPEEDUP`) over MAVLink, with one-click presets (calm pool, light
   chop, open ocean, storm).
 - **Spawn location** — pick where SITL boots on a map, then apply. See below.
+
+## Vehicle presets
+
+The Blue Robotics presets are composed from the parameter layers Blue Robotics publishes
+in [Blueos-Parameter-Repository](https://github.com/bluerobotics/Blueos-Parameter-Repository),
+vendored under `backend/sitl_manager/data/vendor`. Each vehicle is built the way that
+repository composes it — shared hardware, then the vehicle, then its SITL overlay — and
+where a vehicle layer and a SITL overlay disagree the SITL value wins, since that is the
+one the simulator was tuned with.
+
+Two families of parameters are dropped rather than written. The vendor `blacklist.txt`
+covers per-board calibration (compass and accelerometer offsets, device IDs), which
+describes the machine a dump came from rather than the vehicle. On top of that, settings
+that only make sense on real hardware are stripped from the vehicle layers: IMU
+orientation and position, analog pins and scaling for a power sense module SITL simulates
+itself, I2C/serial buses, and per-output trims and reversals that would spin a simulated
+hull in place.
+
+What identifies the vehicle to BlueOS is the frame parameter: `FRAME_CLASS 2` makes
+ArduRover report `MAV_TYPE_SURFACE_BOAT`, which is how a BlueBoat shows up as a boat
+rather than a ground rover, and `FRAME_CONFIG` separates a BlueROV2 (1, vectored) from a
+Heavy (2, vectored 6-DOF). These only rebuild the motor matrix on the next boot, so
+applying a preset restarts the autopilot and then confirms the vehicle type it reports
+over MAVLink actually matches — a BlueBoat has to come back as a Surface Boat.
+
+Applying runs as a background job because it spans a firmware install and two restarts.
+The progress dialog shows a step per stage and, on the parameter stage, every parameter as
+it is handled: written, unchanged (the vehicle already held the value, so nothing was
+sent), not supported by the running firmware, or rejected. Re-applying a preset is
+therefore nearly instant, since a parameter dump up front shows almost everything is
+already correct.
 
 ## Spawn location
 
