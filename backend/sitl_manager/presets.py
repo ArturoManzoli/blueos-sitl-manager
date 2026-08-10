@@ -20,7 +20,7 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 
 # Parameter families owned by the ambient-conditions and location features. They are
 # stripped from vehicle presets so applying a preset never clobbers the simulated
-# environment (wind/waves/tide) or the EKF origin the user set.
+# environment (wind/waves/tide) or the spawn location the user set.
 PRESET_EXCLUDED_PREFIXES: Tuple[str, ...] = ("SIM_",)
 
 
@@ -117,6 +117,16 @@ ENVIRONMENT_PRESETS: List[EnvironmentPreset] = [
         ),
     ),
 ]
+
+# Maps each Location field to its ArduPilot SIM_OPOS_* parameter name. Since BlueOS
+# stopped forcing --home on the SITL binary (bluerobotics/BlueOS#3986) these parameters
+# decide where the vehicle spawns, and stored values win over the defaults BlueOS ships.
+LOCATION_PARAM_MAP: Dict[str, str] = {
+    "latitude": "SIM_OPOS_LAT",
+    "longitude": "SIM_OPOS_LNG",
+    "altitude": "SIM_OPOS_ALT",
+    "heading": "SIM_OPOS_HDG",
+}
 
 LOCATION_PRESETS: List[LocationPreset] = [
     LocationPreset(

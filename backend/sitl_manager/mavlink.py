@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 from typing import Any, Dict, List, NamedTuple, Optional
 
 import aiohttp
@@ -304,20 +305,75 @@ async def dump_all_params(
     return params
 
 
-async def set_gps_global_origin(
+class PositionCheck(NamedTuple):
+    """Outcome of waiting for the vehicle to report itself at a requested position.
+
+    ``latitude``/``longitude`` hold the last fix seen, or None when the vehicle never
+    reported one (no simulated GPS, or it never acquired a fix).
+    """
+
+    reached: bool
+    latitude: Optional[float]
+    longitude: Optional[float]
+
+
+NO_FIX_TYPES = ("GPS_FIX_TYPE_NO_GPS", "GPS_FIX_TYPE_NO_FIX")
+
+
+def _has_gps_fix(raw: Any) -> bool:
+    """mavlink2rest serializes GPS_RAW_INT.fix_type as {"type": "GPS_FIX_TYPE_3D_FIX"};
+    tolerate the plain numeric encoding too (2 = 2D fix, the first usable value)."""
+    if isinstance(raw, dict):
+        return str(raw.get("type", "")) not in NO_FIX_TYPES
+    try:
+        return int(raw) >= 2
+    except (TypeError, ValueError):
+        return False
+
+
+def distance_meters(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
+    earth_radius = 6_371_000.0
+    phi_a, phi_b = math.radians(lat_a), math.radians(lat_b)
+    delta_phi = phi_b - phi_a
+    delta_lambda = math.radians(lon_b - lon_a)
+    haversine = math.sin(delta_phi / 2) ** 2 + math.cos(phi_a) * math.cos(phi_b) * math.sin(delta_lambda / 2) ** 2
+    return 2 * earth_radius * math.asin(min(1.0, math.sqrt(haversine)))
+
+
+async def wait_until_positioned(
     latitude: float,
     longitude: float,
-    altitude: float = 0.0,
+    radius: float,
     system_id: int = DEFAULT_SYSTEM_ID,
-) -> None:
-    """Move the EKF origin. Latitude/longitude are sent as degE7 and altitude as mm."""
-    await send_message(
-        {
-            "type": "SET_GPS_GLOBAL_ORIGIN",
-            "latitude": round(latitude * 1e7),
-            "longitude": round(longitude * 1e7),
-            "altitude": round(altitude * 1e3),
-            "target_system": system_id,
-            "time_usec": 0,
-        }
-    )
+    timeout: float = 30.0,
+    poll_interval: float = 1.0,
+) -> PositionCheck:
+    """Wait for the vehicle to report a GPS fix within ``radius`` meters of a position.
+
+    Used to confirm a new spawn location actually took effect. mavlink2rest serves the
+    last message it saw, which right after a restart can still be the pre-restart
+    position, so we wait for a matching fix instead of trusting the first reading: a
+    stale one simply does not match and polling continues.
+    """
+    session = get_session()
+    url = f"{MAVLINK2REST_URL}/mavlink/vehicles/{system_id}/components/{AUTOPILOT_COMPONENT_ID}/messages/GPS_RAW_INT"
+    last_latitude: Optional[float] = None
+    last_longitude: Optional[float] = None
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    message = (await response.json()).get("message", {})
+                    if _has_gps_fix(message.get("fix_type")):
+                        last_latitude = float(message.get("lat", 0)) / 1e7
+                        last_longitude = float(message.get("lon", 0)) / 1e7
+                        if distance_meters(last_latitude, last_longitude, latitude, longitude) <= radius:
+                            return PositionCheck(True, last_latitude, last_longitude)
+        except Exception as error:  # noqa: BLE001 - best-effort read, keep polling
+            logger.debug(f"GPS_RAW_INT poll failed: {error}")
+        await asyncio.sleep(poll_interval)
+
+    logger.warning(f"Vehicle did not report a position near {latitude}, {longitude}")
+    return PositionCheck(False, last_latitude, last_longitude)

@@ -37,6 +37,8 @@ class EnvironmentPreset(BaseModel):
 
 
 class Location(BaseModel):
+    """Where SITL spawns, held in the ArduPilot ``SIM_OPOS_*`` parameters."""
+
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
     altitude: float = Field(0.0, description="Altitude AMSL, meters")
@@ -46,18 +48,6 @@ class Location(BaseModel):
 class LocationPreset(BaseModel):
     name: str
     location: Location
-
-
-class TeleportRequest(BaseModel):
-    location: Location
-    disable_simulated_gps: bool = Field(
-        True,
-        description=(
-            "Disable the simulated GPS before moving the EKF origin. SITL keeps reporting the "
-            "boot position while its GPS is active, so the relocation only sticks with the "
-            "simulated GPS turned off."
-        ),
-    )
 
 
 class Vehicle(str, Enum):
