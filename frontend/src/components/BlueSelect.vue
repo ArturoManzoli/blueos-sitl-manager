@@ -11,6 +11,21 @@
     <div v-else />
     <slot name="insetElement" />
 
+    <div
+      v-if="infoTooltip"
+      class="relative group inline-flex items-center mr-2 ml-auto"
+    >
+      <span
+        class="mdi mdi-information-outline text-[16px] opacity-60 cursor-help"
+        :class="theme === 'dark' ? 'text-white' : 'text-black'"
+      />
+      <div
+        class="absolute bottom-full mb-1 right-0 hidden group-hover:block w-max max-w-[280px] px-2 py-1 text-xs rounded bg-gray-700 text-white z-[1000]"
+      >
+        {{ infoTooltip }}
+      </div>
+    </div>
+
     <v-menu
       offset-y
       :disabled="disabled"
@@ -112,6 +127,8 @@ const props = defineProps<{
   theme?: 'light' | 'dark'
   /** Label on the left */
   label?: string
+  /** Optional info tooltip shown via an info icon next to the control. */
+  infoTooltip?: string
   /** Control height */
   height?: string
   /** Control width */
