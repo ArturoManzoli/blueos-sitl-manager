@@ -36,3 +36,12 @@ def save_custom_preset(preset: VehiclePreset) -> Path:
     path = _ensure_dir() / f"{_slug(preset.name)}.json"
     path.write_text(json.dumps(preset.dict(), indent=2))
     return path
+
+
+def delete_custom_preset(name: str) -> bool:
+    """Remove a persisted custom preset by name, returning True if a file was deleted."""
+    path = CUSTOM_PRESETS_DIR / f"{_slug(name)}.json"
+    if path.is_file():
+        path.unlink()
+        return True
+    return False

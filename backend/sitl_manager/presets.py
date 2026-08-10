@@ -244,11 +244,17 @@ def is_builtin_preset_name(name: str) -> bool:
 def all_vehicle_presets() -> List[VehiclePreset]:
     """Built-in presets followed by user-saved/imported ones.
 
+    Each preset is tagged with ``builtin`` so the UI knows which ones can be deleted.
     Custom presets that reuse a built-in name are ignored so the curated definitions
     always win; importing under a built-in name is rejected at the API layer.
     """
     # Imported lazily to avoid a circular import: custom_presets reads the models only.
     from sitl_manager.custom_presets import list_custom_presets
 
-    custom = [preset for preset in list_custom_presets() if not is_builtin_preset_name(preset.name)]
-    return [*VEHICLE_PRESETS, *custom]
+    builtin = [preset.copy(update={"builtin": True}) for preset in VEHICLE_PRESETS]
+    custom = [
+        preset.copy(update={"builtin": False})
+        for preset in list_custom_presets()
+        if not is_builtin_preset_name(preset.name)
+    ]
+    return [*builtin, *custom]

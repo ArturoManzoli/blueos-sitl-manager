@@ -95,6 +95,9 @@ class VehiclePreset(BaseModel):
     vehicle: Vehicle
     frame: str = Field(..., description="SITL --frame model, e.g. 'vectored' or 'motorboat-skid'.")
     parameters: Dict[str, float] = Field(default_factory=dict)
+    # Set by the API when listing presets: True for curated built-ins, False for the
+    # user-saved/imported presets that can be deleted. Unset on import/export payloads.
+    builtin: Optional[bool] = None
 
 
 class SavePresetRequest(BaseModel):

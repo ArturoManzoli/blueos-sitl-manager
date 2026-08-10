@@ -254,6 +254,23 @@ async def import_preset(preset: VehiclePreset) -> VehiclePreset:
     return preset
 
 
+@vehicle_router.delete(
+    "/presets/{name}",
+    response_model=OperationResult,
+    summary="Delete a user-saved custom vehicle preset.",
+)
+@to_http_exception
+async def delete_preset(name: str) -> OperationResult:
+    if is_builtin_preset_name(name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{name}' is a built-in preset and cannot be deleted.",
+        )
+    if not custom_presets.delete_custom_preset(name):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown custom preset '{name}'.")
+    return OperationResult(success=True, detail=f"Deleted preset '{name}'.")
+
+
 @vehicle_router.post(
     "/presets/{name}",
     response_model=VehiclePresetResult,
