@@ -24,6 +24,7 @@
         </div>
       </div>
       <div
+        ref="trackRef"
         class="relative flex justify-end overflow-hidden rounded-[6px] elevation-1 z-[666]"
         :class="[theme === 'dark' ? 'bg-[#464646AA]' : 'bg-[#00000011]', disabled ? 'opacity-50 pointer-events-none' : '']"
         :style="{ height: height || '30px' }"
@@ -38,6 +39,7 @@
         >
           <button
             :disabled="disabled || btn.disabled"
+            :title="btn.name"
             class="flex items-center justify-center px-4 text-sm font-medium transition-colors duration-200"
             :class="[
               selected[idx] ? 'text-white' : theme === 'dark' ? 'text-[#ffffff99]' : 'text-[#00000066]',
@@ -47,8 +49,12 @@
             :style="{ backgroundColor: selected[idx] ? btn.activeColor || '#0B5087' : undefined }"
             @click="!btn.disabled && toggleButton(idx)"
           >
-            <div class="relative group inline-block">
-              <p class="text-xs">
+            <div class="relative group inline-block min-w-0">
+              <p
+                data-bbg-label
+                class="text-xs"
+                :class="isWide ? 'truncate max-w-[150px]' : ''"
+              >
                 {{ btn.name }}
               </p>
               <div
@@ -117,7 +123,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 /**
  * One button in the group
@@ -177,6 +183,28 @@ const emit = defineEmits<{
 
 const selected = ref<boolean[]>([])
 const menuOpen = ref(false)
+
+// Once the buttons' natural width would exceed this, cap each label so long names
+// ellipsize instead of letting the group sprawl (or clip) past the panel.
+const GROUP_WIDTH_LIMIT = 850
+const BUTTON_HORIZONTAL_PADDING = 32 // px-4 on both sides
+const trackRef = ref<HTMLElement | null>(null)
+const isWide = ref(false)
+let resizeObserver: ResizeObserver | null = null
+
+const measureWidth = (): void => {
+  const track = trackRef.value
+  if (!track) return
+  // Each label keeps its full text width in scrollWidth even while ellipsized, so the
+  // natural width is independent of the cap we apply, avoiding a measure/toggle loop.
+  const labels = track.querySelectorAll<HTMLElement>('[data-bbg-label]')
+  let natural = 0
+  labels.forEach((label) => {
+    natural += label.scrollWidth + BUTTON_HORIZONTAL_PADDING
+  })
+  natural += Math.max(0, labels.length - 1) // 1px separators between buttons
+  isWide.value = natural > GROUP_WIDTH_LIMIT
+}
 const menuX = ref<number>(0)
 const menuY = ref<number>(0)
 const menuRight = ref<number>(0)
@@ -219,11 +247,25 @@ const openMenu = (event: MouseEvent): void => {
   menuOpen.value = true
 }
 
-onMounted(initSelected)
+onMounted(() => {
+  initSelected()
+  nextTick(measureWidth)
+  if (typeof ResizeObserver !== 'undefined' && trackRef.value) {
+    resizeObserver = new ResizeObserver(() => measureWidth())
+    resizeObserver.observe(trackRef.value)
+  }
+})
+
+onBeforeUnmount(() => resizeObserver?.disconnect())
 
 watch(
   () => props.buttonItems.length,
   initSelected,
   { deep: true, immediate: true }
+)
+
+watch(
+  () => props.buttonItems.map((item) => item.name).join('|'),
+  () => nextTick(measureWidth)
 )
 </script>
