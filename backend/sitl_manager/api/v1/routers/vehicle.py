@@ -1,21 +1,19 @@
-import asyncio
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi_versioning import versioned_api_route
-from loguru import logger
 
-from sitl_manager import autopilot, mavlink
+from sitl_manager import apply_job, autopilot, mavlink
 from sitl_manager.api.common import to_http_exception
 from sitl_manager import custom_presets
 from sitl_manager.models import (
     ActivePreset,
+    ApplyJob,
     FrameRequest,
     OperationResult,
     SavePresetRequest,
     Vehicle,
     VehiclePreset,
-    VehiclePresetResult,
     VehicleStatus,
     VehicleTypeRequest,
 )
@@ -24,7 +22,6 @@ from sitl_manager.presets import (
     all_vehicle_presets,
     is_builtin_preset_name,
 )
-from sitl_manager.settings import VEHICLE_READY_TIMEOUT
 
 # The frame-defining parameter that distinguishes the presets of each vehicle family:
 # FRAME_CONFIG separates BlueROV2 (1) from BlueROV2 Heavy (2); FRAME_CLASS identifies the
@@ -44,23 +41,6 @@ FIRMWARE_TYPE_TO_VEHICLE = {
     Vehicle.PLANE: "plane",
     Vehicle.COPTER: "copter",
 }
-
-# Hold references to fire-and-forget restarts so the event loop does not garbage-collect
-# them mid-flight.
-_background_tasks: Set["asyncio.Task[None]"] = set()
-
-
-async def _restart_quietly() -> None:
-    try:
-        await autopilot.restart()
-    except Exception as error:  # noqa: BLE001 - background best-effort, nothing to surface
-        logger.warning(f"Background autopilot restart failed: {error}")
-
-
-def _restart_in_background() -> None:
-    task = asyncio.create_task(_restart_quietly())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
 
 async def _detect_active_preset(vehicle_type: str) -> Optional[str]:
@@ -161,26 +141,33 @@ async def frames() -> List[str]:
     return SITL_FRAMES
 
 
-@vehicle_router.post("/frame", response_model=OperationResult, summary="Set the SITL frame and optionally restart.")
-@to_http_exception
-async def set_frame(request: FrameRequest) -> OperationResult:
-    await autopilot.set_sitl_frame(request.frame)
-    if request.restart:
-        await autopilot.restart()
-    detail = "Frame set." if not request.restart else "Frame set and autopilot restarted."
-    return OperationResult(success=True, detail=detail)
+def _start_job(start: Callable[[], ApplyJob]) -> ApplyJob:
+    try:
+        return start()
+    except apply_job.JobBusyError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 
-@vehicle_router.post(
-    "/type", response_model=OperationResult, summary="Switch the SITL vehicle type (installs firmware)."
+@vehicle_router.get(
+    "/apply-job",
+    response_model=Optional[ApplyJob],
+    summary="Progress of the running (or last) configuration change.",
 )
 @to_http_exception
-async def set_type(request: VehicleTypeRequest) -> OperationResult:
-    try:
-        name = await autopilot.install_stable_firmware(request.vehicle)
-    except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    return OperationResult(success=True, detail=f"Installing {name}. The autopilot will restart.")
+async def apply_job_status() -> Optional[ApplyJob]:
+    return apply_job.current_job()
+
+
+@vehicle_router.post("/frame", response_model=ApplyJob, summary="Set the SITL frame and restart.")
+@to_http_exception
+async def set_frame(request: FrameRequest) -> ApplyJob:
+    return _start_job(lambda: apply_job.start_frame(request.frame))
+
+
+@vehicle_router.post("/type", response_model=ApplyJob, summary="Switch the SITL vehicle type (installs firmware).")
+@to_http_exception
+async def set_type(request: VehicleTypeRequest) -> ApplyJob:
+    return _start_job(lambda: apply_job.start_vehicle(request.vehicle))
 
 
 @vehicle_router.post("/restart", response_model=OperationResult, summary="Restart the autopilot.")
@@ -272,62 +259,21 @@ async def delete_preset(name: str) -> OperationResult:
 
 
 @vehicle_router.post(
-    "/presets/{name}",
-    response_model=VehiclePresetResult,
+    "/presets/{name}/apply",
+    response_model=ApplyJob,
     summary="Apply a vehicle preset: firmware, SITL frame and parameters.",
 )
 @to_http_exception
-async def apply_vehicle_preset(name: str) -> VehiclePresetResult:
-    """Bring SITL to a known vehicle configuration.
+async def apply_vehicle_preset(name: str) -> ApplyJob:
+    """Start bringing SITL to a known vehicle configuration.
 
-    Persists the SITL frame, ensures the matching firmware is installed, restarts the
-    autopilot, then writes the preset's parameters once it is back online. A final
-    restart rebuilds the motor matrix so frame-defining parameters (FRAME_CONFIG /
-    FRAME_CLASS) take effect.
+    Returns immediately with the job to poll: the work installs the matching firmware,
+    persists the SITL frame, writes the parameters that differ from what the vehicle
+    already holds, and restarts the autopilot so frame-defining parameters (FRAME_CLASS /
+    FRAME_CONFIG) rebuild the motor matrix.
     """
-    preset = next((item for item in all_vehicle_presets() if item.name == name), None)
-    if preset is None:
+    match = next((item for item in all_vehicle_presets() if item.name == name), None)
+    if match is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown vehicle preset '{name}'.")
-
-    await autopilot.set_sitl_frame(preset.frame)
-
-    current_type = await autopilot.get_firmware_vehicle_type()
-    needs_install = not current_type or preset.vehicle.value.lower() not in str(current_type).lower()
-    if needs_install:
-        try:
-            await autopilot.install_stable_firmware(preset.vehicle)
-        except ValueError as error:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    else:
-        await autopilot.restart()
-
-    ready = await mavlink.wait_until_ready(timeout=VEHICLE_READY_TIMEOUT)
-    if not ready:
-        return VehiclePresetResult(
-            success=False,
-            detail="The autopilot did not come back online in time; parameters were not applied.",
-            failed=list(preset.parameters),
-        )
-
-    result = await mavlink.set_params_bulk(preset.parameters)
-
-    # All parameters were already sent; verification just confirms which stuck. When the
-    # read-back pass bails on a run of unresponsive params, finish the frame-rebuild
-    # restart in the background so the UI is not held hostage to slow verification.
-    if result.aborted:
-        _restart_in_background()
-        detail = (
-            f"Applying {preset.name} in the background: {len(result.applied)} parameter(s) confirmed, "
-            f"{len(result.unverified)} still settling. The autopilot will restart to rebuild the frame."
-        )
-        return VehiclePresetResult(success=True, detail=detail, applied=result.applied, failed=result.failed)
-
-    await autopilot.restart()
-
-    detail = f"Applied {preset.name}: {len(result.applied)} parameter(s) set; autopilot restarted to rebuild the frame."
-    if result.failed:
-        preview = ", ".join(result.failed[:8])
-        if len(result.failed) > 8:
-            preview += f", +{len(result.failed) - 8} more"
-        detail += f" {len(result.failed)} parameter(s) could not be verified: {preview}."
-    return VehiclePresetResult(success=not result.failed, detail=detail, applied=result.applied, failed=result.failed)
+    preset = match
+    return _start_job(lambda: apply_job.start_preset(preset))

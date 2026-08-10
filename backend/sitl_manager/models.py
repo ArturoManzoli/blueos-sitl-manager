@@ -67,7 +67,6 @@ class VehicleStatus(BaseModel):
 
 class FrameRequest(BaseModel):
     frame: str
-    restart: bool = True
 
 
 class VehicleTypeRequest(BaseModel):
@@ -97,11 +96,70 @@ class SavePresetRequest(BaseModel):
     description: str = ""
 
 
-class VehiclePresetResult(BaseModel):
-    success: bool
+class StepState(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class ApplyStep(BaseModel):
+    """One stage of an apply job, as shown on the progress dialog's step bar."""
+
+    key: str
+    title: str
+    state: StepState = StepState.PENDING
     detail: str = ""
-    applied: List[str] = Field(default_factory=list)
-    failed: List[str] = Field(default_factory=list)
+
+
+class ParamOutcome(str, Enum):
+    """What happened to one parameter during the parameter stage.
+
+    ``UNCHANGED`` means the vehicle already held the wanted value, so nothing was sent.
+    ``UNSUPPORTED`` means the running firmware does not have the parameter at all, which
+    is expected when a preset carries values from a different ArduPilot version.
+    """
+
+    WRITTEN = "written"
+    UNCHANGED = "unchanged"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
+class ParamRecord(BaseModel):
+    name: str
+    value: float
+    outcome: ParamOutcome
+
+
+class JobState(str, Enum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ApplyJob(BaseModel):
+    """Progress of a vehicle configuration change.
+
+    Applying a preset takes a firmware install and two autopilot restarts, far longer
+    than a request should hold open, so the work runs in the background and the frontend
+    polls this snapshot to drive the progress dialog.
+    """
+
+    id: int
+    title: str
+    state: JobState = JobState.RUNNING
+    detail: str = ""
+    steps: List[ApplyStep] = Field(default_factory=list)
+    params_total: int = 0
+    params_done: int = 0
+    current_param: Optional[str] = None
+    records: List[ParamRecord] = Field(default_factory=list)
+    counts: Dict[str, int] = Field(default_factory=dict, description="Parameter records grouped by outcome")
+    reported_vehicle: Optional[str] = Field(
+        None, description="Vehicle type the autopilot reports over MAVLink once reconfigured"
+    )
 
 
 class ActivePreset(BaseModel):
