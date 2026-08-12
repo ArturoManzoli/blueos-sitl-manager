@@ -20,6 +20,8 @@ const location = ref<SitlLocation>({ latitude: -27.563, longitude: -48.459, alti
 const applied = ref<SitlLocation | null>(null)
 const presets = ref<LocationPreset[]>([])
 const busy = ref(false)
+// Kept apart from busy so a read does not put the Apply button in a spin it has no part in.
+const fetching = ref(false)
 
 const presetMenuOpen = ref(false)
 const saveDialogOpen = ref(false)
@@ -126,12 +128,28 @@ async function loadPresets(): Promise<void> {
 }
 
 // Show where the vehicle is actually configured to spawn rather than a hardcoded guess.
-async function refresh(): Promise<void> {
+async function refresh(): Promise<boolean> {
   try {
     location.value = await LocationApi.get()
     applied.value = { ...location.value }
+    return true
   } catch (error) {
     notifyError(error, 'Could not read the spawn location')
+    return false
+  }
+}
+
+// The form is free to wander — a preset tried on, a pin dragged across the map — and this
+// brings it back to the vehicle, which also says where the vehicle stands if it was moved
+// from somewhere else in the meantime.
+async function fetchFromVehicle(): Promise<void> {
+  fetching.value = true
+  try {
+    if (await refresh()) {
+      notify('Read the spawn location back from the vehicle.', 'info')
+    }
+  } finally {
+    fetching.value = false
   }
 }
 
@@ -293,7 +311,7 @@ async function applyLocation(): Promise<void> {
           label="Presets"
           theme="dark"
           type="switch"
-          :disabled="busy"
+          :disabled="busy || fetching"
           :button-items="presetButtons"
           info-tooltip="Selecting a preset fills the coordinates below; Apply writes them to the vehicle's SIM_OPOS_* parameters and restarts the autopilot, after which SITL boots here every time. Hold or right-click a preset for its own actions."
           @context-menu="onPresetContextMenu"
@@ -386,21 +404,33 @@ async function applyLocation(): Promise<void> {
     </div>
 
     <div class="flex items-center justify-between gap-2">
-      <v-btn
-        size="small"
-        prepend-icon="mdi-crosshairs-gps"
-        :disabled="busy"
-        @click="useBrowserLocation"
-      >
-        Use my location
-      </v-btn>
+      <div class="flex items-center gap-2">
+        <v-btn
+          size="small"
+          prepend-icon="mdi-crosshairs-gps"
+          :disabled="busy || fetching"
+          @click="useBrowserLocation"
+        >
+          Use my location
+        </v-btn>
+        <v-btn
+          class="ml-2"
+          size="small"
+          prepend-icon="mdi-refresh"
+          :loading="fetching"
+          :disabled="busy"
+          @click="fetchFromVehicle"
+        >
+          Fetch from vehicle
+        </v-btn>
+      </div>
       <!-- Only the write waits for the simulator: picking, saving and exporting coordinates
            is the same work on any board. -->
       <v-btn
         color="primary"
         size="small"
         :loading="busy"
-        :disabled="!isSitl || !pendingChange"
+        :disabled="!isSitl || !pendingChange || fetching"
         @click="applyLocation"
       >
         Apply and restart
