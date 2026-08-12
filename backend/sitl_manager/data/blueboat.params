@@ -18,10 +18,17 @@
 # vehicle the overlay describes does 5 m/s.
 
 # Hull and thruster mixing: two thrusters, differential (skid) steering.
+#
+# The outputs are in the order SITL reads them, which is the reverse of the shipped
+# BlueBoat's wiring. SIM_Rover takes output 1 as the left motor and output 3 as the right
+# one and derives yaw from their difference, whereas the real hull puts the right thruster
+# on output 1 and reverses output 3 to suit how that thruster is mounted. Keeping the
+# vehicle's order without its SERVO3_REVERSED would invert the steering loop, leaving the
+# boat turning away from every waypoint.
 FRAME_CLASS      2     # Boat — makes the firmware report MAV_TYPE_SURFACE_BOAT
 FRAME_TYPE       0     # Undefined, unused by the boat frame class
-SERVO1_FUNCTION  74    # ThrottleRight
-SERVO3_FUNCTION  73    # ThrottleLeft
+SERVO1_FUNCTION  73    # ThrottleLeft
+SERVO3_FUNCTION  74    # ThrottleRight
 PILOT_STEER_TYPE 3     # Direct throttle-left/throttle-right pilot input
 
 MOT_SLEWRATE     200
