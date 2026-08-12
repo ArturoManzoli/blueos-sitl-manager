@@ -15,7 +15,9 @@ export default createVuetify({
       blueosDark: {
         dark: true,
         colors: {
-          primary: '#0B5087',
+          // Same blue as --bluevue-primary, so a Vuetify button and the Blue* control beside it
+          // are picked out in one colour.
+          primary: '#0A4B6B',
           secondary: '#26A69A',
           surface: '#363636',
           background: '#121212',
