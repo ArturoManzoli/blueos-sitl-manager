@@ -89,7 +89,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     ref="mapElement"
-    class="sitl-map"
+    class="sitl-map elevation-1"
   />
 </template>
 
