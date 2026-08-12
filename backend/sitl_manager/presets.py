@@ -230,6 +230,15 @@ LOCATION_PARAM_MAP: Dict[str, str] = {
     "heading": "SIM_OPOS_HDG",
 }
 
+# Where a vehicle spawns when nothing says otherwise: the location BlueOS ships. Stood in
+# for a parameter that cannot be read, and for the zeroes a firmware install leaves behind.
+DEFAULT_SPAWN_BY_FIELD: Dict[str, float] = {
+    "latitude": DEFAULT_HOME_LATITUDE,
+    "longitude": DEFAULT_HOME_LONGITUDE,
+    "altitude": DEFAULT_HOME_ALTITUDE,
+    "heading": DEFAULT_HOME_HEADING,
+}
+
 LOCATION_PRESETS: List[LocationPreset] = [
     LocationPreset(
         name="Florianópolis (BlueOS default)",

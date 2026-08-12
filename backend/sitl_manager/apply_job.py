@@ -26,6 +26,7 @@ from sitl_manager.models import (
     Vehicle,
     VehiclePreset,
 )
+from sitl_manager.presets import DEFAULT_SPAWN_BY_FIELD, LOCATION_PARAM_MAP
 from sitl_manager.settings import REBUILD_READY_TIMEOUT, VEHICLE_READY_TIMEOUT
 
 STEP_VEHICLE = "vehicle"
@@ -51,6 +52,10 @@ PARAM_ATTEMPTS = 2
 
 # Long enough for the autopilot being replaced to fall silent before its successor is looked for.
 RESTART_SETTLE = 2.0
+
+# Reading the spawn location holds up a vehicle change that is about to take minutes, so a
+# parameter that does not answer promptly is treated as unreadable and defaulted instead.
+SPAWN_READ_TIMEOUT = 1.5
 
 
 class _Request(NamedTuple):
@@ -86,6 +91,9 @@ _StageFn = Callable[[ApplyJob, _Request, _Progress], Awaitable[None]]
 
 _job: Optional[ApplyJob] = None
 _request: Optional[_Request] = None
+# The spawn location carried across a firmware install. Belongs to the job rather than to a
+# single run of it, so a retry that resumes at the parameters step still writes it back.
+_carried_spawn: Dict[str, float] = {}
 _task: Optional["asyncio.Task[None]"] = None
 _tasks: Set["asyncio.Task[None]"] = set()
 _next_id = 1
@@ -136,6 +144,26 @@ def _record(job: ApplyJob, name: str, value: float, outcome: ParamOutcome) -> No
     job.params_done = len(job.records)
 
 
+async def _read_spawn() -> Dict[str, float]:
+    """Where the vehicle currently spawns, as parameters ready to be written back.
+
+    Zero is not a place anyone chose: it is what SIM_OPOS_* read as before they have been
+    set, and the position Cockpit draws for a vehicle that never had a fix. A vehicle sitting
+    on it — or a parameter that would not answer — gets the BlueOS default instead, so no
+    path through this leaves the simulator adrift off West Africa.
+    """
+    spawn: Dict[str, float] = {}
+    for field_name, param in LOCATION_PARAM_MAP.items():
+        value = await mavlink.get_param(param, timeout=SPAWN_READ_TIMEOUT)
+        spawn[param] = DEFAULT_SPAWN_BY_FIELD[field_name] if value is None else value
+
+    latitude, longitude = LOCATION_PARAM_MAP["latitude"], LOCATION_PARAM_MAP["longitude"]
+    if not spawn[latitude] and not spawn[longitude]:
+        logger.info("Spawn location reads as 0, 0; carrying the BlueOS default across instead")
+        return {param: DEFAULT_SPAWN_BY_FIELD[name] for name, param in LOCATION_PARAM_MAP.items()}
+    return spawn
+
+
 async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
     """Install the firmware for a vehicle type. Returns whether anything was installed.
 
@@ -148,6 +176,12 @@ async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
     if current and vehicle.value.lower() in str(current).lower():
         _finish(job, STEP_VEHICLE, f"Already running {current}", state=StepState.SKIPPED)
         return False
+    # Read before installing: the new firmware gets its own parameter storage, so the spawn
+    # location the user picked is about to revert to SIM_OPOS's zeroes. Written back with the
+    # preset's own parameters below, where the rebuild restart is what brings the vehicle up
+    # in the right place.
+    global _carried_spawn  # noqa: PLW0603 - one autopilot, one job
+    _carried_spawn = await _read_spawn()
     _begin(job, STEP_VEHICLE, f"Looking up the latest stable {vehicle.value} build")
     firmware = await autopilot.latest_stable_firmware(vehicle)
     name = str(firmware["name"])
@@ -296,7 +330,11 @@ async def _stage_boot(job: ApplyJob, request: "_Request", progress: "_Progress")
 
 
 async def _stage_parameters(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
-    params = request.params
+    # The spawn location read before the install rides along with the preset's parameters:
+    # it is a parameter like any other, and sending it here means the rebuild restart is what
+    # applies it, rather than a third reboot. Already-correct values cost nothing, since the
+    # write only happens where the vehicle disagrees.
+    params = {**request.params, **_carried_spawn}
     if not params:
         _finish(job, STEP_PARAMETERS, "No parameters to send", state=StepState.SKIPPED)
         return
@@ -384,10 +422,13 @@ def _start(
     frame: Optional[str],
     params: Dict[str, float],
 ) -> ApplyJob:
-    global _job, _request, _task, _next_id  # noqa: PLW0603 - one autopilot, one job
+    global _job, _request, _task, _next_id, _carried_spawn  # noqa: PLW0603 - one autopilot, one job
 
     if is_running():
         raise JobBusyError("Another configuration change is still running.")
+
+    # Belongs to the job about to start, not to the one before it.
+    _carried_spawn = {}
 
     job = ApplyJob(
         id=_next_id,
