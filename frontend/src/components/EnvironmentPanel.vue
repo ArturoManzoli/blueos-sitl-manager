@@ -29,6 +29,9 @@ const environment = ref<EnvironmentForm>({
   tide_speed: 0,
   speedup: 1,
 })
+// The conditions the vehicle was last read to be running, which is what the sliders are
+// measured against to decide whether there is anything left to write.
+const applied = ref<EnvironmentForm | null>(null)
 const presets = ref<EnvironmentPreset[]>([])
 const busy = ref(false)
 const frame = ref<string | null>(null)
@@ -137,11 +140,23 @@ const waterNotes = computed<Note[]>(() => {
   ]
 })
 
+// A preset matches while every condition it names is on the sliders, so the highlight follows
+// a value dragged onto or away from a preset rather than only a preset that was clicked.
+const matchedPresetName = computed(
+  () =>
+    presets.value.find((preset) =>
+      (Object.keys(preset.environment) as (keyof Environment)[]).every(
+        (key) => preset.environment[key] == null || preset.environment[key] === environment.value[key]
+      )
+    )?.name ?? ''
+)
+
 const presetButtons = computed(() =>
   presets.value.map((preset) => ({
     name: preset.name,
     tooltip: preset.description,
-    onSelected: () => applyPreset(preset),
+    preSelected: preset.name === matchedPresetName.value,
+    onSelected: () => stagePreset(preset),
   })),
 )
 
@@ -165,10 +180,19 @@ async function refresh(): Promise<void> {
         environment.value[key] = value
       }
     }
+    applied.value = { ...environment.value }
   } catch (error) {
     notifyError(error, 'Could not read current conditions')
   }
 }
+
+const pendingChange = computed(() => {
+  const current = applied.value
+  return (
+    current === null ||
+    (Object.keys(current) as (keyof EnvironmentForm)[]).some((key) => current[key] !== environment.value[key])
+  )
+})
 
 // Every value is read back after being written, so a name missing from `applied` is one the
 // simulator is not running, which is worth saying rather than reporting a clean success.
@@ -191,6 +215,7 @@ async function apply(): Promise<void> {
   busy.value = true
   try {
     const result = await EnvironmentApi.set(environment.value)
+    applied.value = { ...environment.value }
     reportApplied(result, `Applied ${result.applied.length} parameter(s)`)
   } catch (error) {
     notifyError(error, 'Could not apply environment')
@@ -199,20 +224,14 @@ async function apply(): Promise<void> {
   }
 }
 
-async function applyPreset(preset: EnvironmentPreset): Promise<void> {
-  busy.value = true
-  try {
-    for (const key of Object.keys(preset.environment) as (keyof Environment)[]) {
-      const value = preset.environment[key]
-      if (value != null) {
-        environment.value[key] = value
-      }
+// Presets fill the sliders and stop there, the way the spawn locations do: what the panel
+// shows is then what Apply will write, whether it came from a preset or from a slider.
+function stagePreset(preset: EnvironmentPreset): void {
+  for (const key of Object.keys(preset.environment) as (keyof Environment)[]) {
+    const value = preset.environment[key]
+    if (value != null) {
+      environment.value[key] = value
     }
-    reportApplied(await EnvironmentApi.applyPreset(preset.name), `Applied preset "${preset.name}"`)
-  } catch (error) {
-    notifyError(error, 'Could not apply preset')
-  } finally {
-    busy.value = false
   }
 }
 
@@ -233,12 +252,14 @@ const noteClasses = (note: Note): string =>
   <div class="flex flex-col gap-5">
     <BlueButtonGroup
       v-if="presetButtons.length"
+      :key="matchedPresetName"
       label="Presets"
       theme="dark"
       type="switch"
       density="regular"
       :disabled="busy || !isSitl"
       :button-items="presetButtons"
+      info-tooltip="Picking a preset fills the sliders below with the conditions it describes; Apply writes them to the simulator."
     />
 
     <div>
@@ -425,7 +446,7 @@ const noteClasses = (note: Note): string =>
         size="small"
         color="primary"
         :loading="busy"
-        :disabled="!isSitl"
+        :disabled="!isSitl || !pendingChange"
         @click="apply"
       >
         Apply conditions
