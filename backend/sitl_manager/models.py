@@ -84,12 +84,15 @@ class VehicleStatus(BaseModel):
     firmware_version: Optional[str] = None
 
 
-class FrameRequest(BaseModel):
-    frame: str
+class VehicleConfigRequest(BaseModel):
+    """A vehicle type, a SITL frame, or both, to be brought about in one job.
 
+    Both are optional because either can be left as it is, but a request naming neither has
+    nothing to do and is refused.
+    """
 
-class VehicleTypeRequest(BaseModel):
-    vehicle: Vehicle
+    vehicle: Optional[Vehicle] = None
+    frame: Optional[str] = None
 
 
 class VehiclePreset(NamedPreset):
