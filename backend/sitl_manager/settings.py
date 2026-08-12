@@ -46,6 +46,11 @@ VEHICLE_READY_TIMEOUT = float(os.environ.get("SITL_VEHICLE_READY_TIMEOUT", "120"
 # normal API call; it needs its own timeout so it is not killed by HTTP_TIMEOUT.
 FIRMWARE_INSTALL_TIMEOUT = float(os.environ.get("SITL_FIRMWARE_INSTALL_TIMEOUT", "300"))
 
+# Listing the builds for a vehicle sends ArduPilot Manager to ArduPilot's firmware index
+# over the internet, which measured 14 to 41 seconds from a Raspberry Pi. Generous enough to
+# survive a slow link, since giving up here fails the whole vehicle change.
+FIRMWARE_LIST_TIMEOUT = float(os.environ.get("SITL_FIRMWARE_LIST_TIMEOUT", "120"))
+
 # How long to wait, after the autopilot restarts, for the simulated GPS to report a fix at
 # the requested spawn location before reporting that the move could not be confirmed.
 SPAWN_VERIFY_TIMEOUT = float(os.environ.get("SITL_SPAWN_VERIFY_TIMEOUT", "30"))
