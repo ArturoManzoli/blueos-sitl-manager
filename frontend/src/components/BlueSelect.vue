@@ -1,9 +1,16 @@
 <template>
   <div class="flex w-full justify-between items-center">
-    <div v-if="label">
+    <!-- shrink-0 keeps the label at its natural width: letting flex shrink it by the fraction
+         of a pixel that rounding introduces is enough for Chromium to ellipsize a label that
+         fits. The cap is what makes an outsized label ellipsize instead of eating the row. -->
+    <div
+      v-if="label"
+      class="min-w-0 max-w-[45%] shrink-0"
+    >
       <label
-        class="text-start mr-6"
-        :class="theme === 'dark' ? 'text-white' : 'text-black'"
+        class="block truncate text-start mr-6"
+        :title="label"
+        :class="[theme === 'dark' ? 'text-white' : 'text-black', disabled ? 'opacity-30' : '']"
       >
         {{ label }}
       </label>
@@ -13,7 +20,7 @@
 
     <div
       v-if="infoTooltip"
-      class="relative group inline-flex items-center mr-2 ml-auto"
+      class="relative group inline-flex items-center shrink-0 mr-2 ml-auto"
     >
       <span
         class="mdi mdi-information-outline text-[16px] opacity-60 cursor-help"
@@ -26,74 +33,85 @@
       </div>
     </div>
 
-    <v-menu
-      offset-y
-      :disabled="disabled"
-      class="flex"
-      style="z-index: 999999"
-      :close-on-content-click="!multiSelect"
-    >
-      <template #activator="{ props: menuProps }">
-        <div class="flex flex-column align-end">
-          <button
-            v-bind="menuProps"
-            class="relative inline-flex items-center justify-between pl-4 rounded-[6px] elevation-1"
-            :class="[
-              theme === 'dark' ? 'bg-[#464646AA]' : 'bg-[#00000011]',
-              disabled ? 'opacity-50 pointer-events-none' : 'cursor-pointer',
-              hasError ? 'border-solid border-opacity-50 border-error border-md' : ''
-            ]"
-            :style="{ height: height || '30px', width: width || 'auto' }"
-          >
-            <span
-              class="text-sm font-medium truncate mr-1 maxWidth-[100%] -mb-[1px]"
-              :class="selectedTextClass"
-            >
-              {{ !multiSelect ? selectedItem.name : selectedValues.length > 0 ? selectedValues.join(', ') : 'Select...' }}
-            </span>
-            <v-icon :class="['transition-transform', iconClass]">
-              mdi-menu-down
-            </v-icon>
-          </button>
-          <div
-            v-if="hasError"
-            class="text-[14px] text-error"
-          >
-            {{ (errorMessages?.[0]) || '' }}
-          </div>
-        </div>
-      </template>
-
-      <v-list
-        class="py-0"
-        :theme="theme"
+    <div class="flex flex-col items-end min-w-0 shrink-[1000]">
+      <button
+        ref="anchorRef"
+        v-bind="activatorProps"
+        type="button"
+        :disabled="disabled"
+        class="relative inline-flex items-center justify-between pl-4 rounded-[6px] bluevue-elevation-1 min-w-[90px] max-w-full"
+        :class="[
+          disabled ? 'opacity-30' : 'cursor-pointer',
+          hasError ? 'border-2 border-solid border-[var(--bluevue-error)]' : ''
+        ]"
+        :style="{ height: height || '30px', width: width || 'auto', backgroundColor: closedBackground }"
       >
-        <v-list-item
+        <span
+          class="text-sm font-medium truncate min-w-0 mr-1 -mb-[1px]"
+          :class="selectedTextClass"
+        >
+          {{ !multiSelect ? selectedItem.name : selectedValues.length > 0 ? selectedValues.join(', ') : 'Select...' }}
+        </span>
+        <span
+          class="mdi mdi-menu-down text-[24px] leading-none shrink-0 transition-transform"
+          :class="[iconClass, isOpen ? 'rotate-180' : '']"
+        />
+      </button>
+      <div
+        v-if="hasError"
+        class="text-[14px] text-[var(--bluevue-error)]"
+      >
+        {{ (errorMessages?.[0]) || '' }}
+      </div>
+    </div>
+
+    <div
+      :id="popoverId"
+      ref="popoverRef"
+      popover
+      class="bluevue-popover"
+      :style="floatingStyles"
+      @toggle="onToggle"
+    >
+      <ul
+        class="bluevue-elevation-5 max-h-[60vh] overflow-y-auto rounded-[4px] border border-[#FFFFFF22]"
+        :class="[
+          theme === 'dark' ? 'bg-[var(--bluevue-surface)]' : 'bg-white',
+          isPositioned ? 'opacity-100' : 'opacity-0',
+        ]"
+      >
+        <li
           v-for="(opt, idx) in items"
           :key="opt.name"
-          :disabled="disabled || opt.disabled"
-          @click="selectOption(idx)"
         >
-          <div class="flex justify-between">
-            <v-icon
-              v-if="selectedValues.includes(opt.value || opt.name)"
-              class="mt-1 text-[16px]"
-            >
-              mdi-check
-            </v-icon>
-            <div v-else />
-            <v-list-item-title :class="itemTextClass(opt)">
-              {{ opt.name }}
-            </v-list-item-title>
-          </div>
-        </v-list-item>
-      </v-list>
-    </v-menu>
+          <button
+            type="button"
+            :disabled="disabled || opt.disabled"
+            class="flex w-full items-center justify-between gap-2 whitespace-nowrap px-4 py-2 text-left text-sm"
+            :class="[
+              itemTextClass(opt),
+              disabled || opt.disabled
+                ? 'cursor-not-allowed'
+                : theme === 'dark' ? 'cursor-pointer hover:bg-[#ffffff11]' : 'cursor-pointer hover:bg-gray-100',
+            ]"
+            @click="selectOption(idx)"
+          >
+            <span
+              class="mdi mdi-check text-[16px] leading-none"
+              :class="selectedValues.includes(opt.value || opt.name) ? '' : 'invisible'"
+            />
+            {{ opt.name }}
+          </button>
+        </li>
+      </ul>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+
+import { useBluePopover } from '@/composables/useBluePopover'
 
 /**
  * Option in the select
@@ -149,9 +167,26 @@ const emit = defineEmits<{
 const selectedValues = ref<(string | number)[]>([])
 const selectedItem = ref<OptionItem>({ name: 'Select...' })
 
+const {
+  anchorRef,
+  popoverRef,
+  popoverId,
+  activatorProps,
+  isOpen,
+  isPositioned,
+  floatingStyles,
+  hide,
+  onToggle,
+} = useBluePopover({ matchAnchorWidth: true })
+
 const hasError = computed(() =>
   props.errorMessages && props.errorMessages.length > 0
 )
+
+// Applied inline because the activator is a <button>, and Vuetify's unlayered reset sets
+// button { background-color: transparent }, which beats any Tailwind utility for it: the
+// utilities sit in a cascade layer, and unlayered rules win over layered ones outright.
+const closedBackground = computed(() => (props.theme === 'dark' ? '#FFFFFF05' : '#00000011'))
 
 const selectOption = (index: number) => {
   if (props.multiSelect) {
@@ -167,6 +202,8 @@ const selectOption = (index: number) => {
     const value = props.items[index].value || props.items[index].name
     selectedItem.value = props.items[index]
     emit('update:modelValue', value)
+    // Picking one of several closes the list; ticking one of many leaves it up for the next tick.
+    hide()
   }
 }
 
