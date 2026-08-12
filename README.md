@@ -13,14 +13,16 @@ Firmware page, the Parameter Editor and MAVProxy.
 
 ## What it does
 
-- **Vehicle presets** — one click turns SITL into a BlueBoat, BlueROV2 or BlueROV2 Heavy
-  (plus generic rover, copter and plane), installing the firmware, setting the SITL frame
-  and writing the vehicle's parameters. See below.
+- **Vehicle presets** — turns SITL into a BlueBoat, BlueROV2 or BlueROV2 Heavy (plus
+  generic rover, copter and plane), installing the firmware, setting the SITL frame and
+  writing the vehicle's parameters. See below.
 - **Vehicle & frame** — the vehicle type (Sub / Rover / Plane / Copter) and SITL frame
-  selectors apply on selection, through the same job and progress dialog as a preset.
+  selectors, which move the row to Custom because the combination is yours rather than a
+  preset's. Nothing here reaches the vehicle until "Apply and restart" is pressed, and that
+  button stays disabled while the section says what the vehicle already is.
 - **Ambient conditions** — set ArduPilot `SIM_*` parameters (`SIM_WIND_*`, `SIM_WAVE_*`,
-  `SIM_TIDE_*`, `SIM_SPEEDUP`) over MAVLink, with one-click presets (calm pool, light
-  chop, open ocean, storm). See below.
+  `SIM_TIDE_*`, `SIM_SPEEDUP`) over MAVLink, with presets (calm pool, light chop, open
+  ocean, storm) that fill the sliders for "Apply conditions" to write. See below.
 - **Spawn location** — pick where SITL boots on a map, then apply. See below.
 
 <img width="1346" height="968" alt="image" src="https://github.com/user-attachments/assets/0cfa3129-3d68-4bc5-b73c-a6638ee69524" />
@@ -62,6 +64,13 @@ rather than a ground rover, and `FRAME_CONFIG` separates a BlueROV2 (1, vectored
 Heavy (2, vectored 6-DOF). These only rebuild the motor matrix on the next boot, so
 applying a preset restarts the autopilot and then confirms the vehicle type it reports
 over MAVLink actually matches — a BlueBoat has to come back as a Surface Boat.
+
+Picking a preset only fills the vehicle type and frame selectors with what it describes;
+"Apply and restart" is what writes any of it. A selector changed by hand moves the row to
+**Custom**, which is the scratch entry: any pairing of vehicle type and frame can be tried
+from it, and saving one that worked turns it into a preset of its own and hands Custom back
+empty. A preset is never selected on the user's behalf — detection runs once on load, to
+name the vehicle that was already there, and only ever answers with a built-in.
 
 Applying runs as a background job because it spans a firmware install and two restarts.
 The progress dialog shows a step per stage and, on the parameter stage, every parameter as
