@@ -253,6 +253,7 @@ const noteClasses = (note: Note): string =>
     <BlueButtonGroup
       v-if="presetButtons.length"
       :key="matchedPresetName"
+      class="order-1"
       label="Presets"
       theme="dark"
       type="switch"
@@ -262,7 +263,7 @@ const noteClasses = (note: Note): string =>
       info-tooltip="Picking a preset fills the sliders below with the conditions it describes; Apply writes them to the simulator."
     />
 
-    <div>
+    <div class="order-2">
       <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
         Simulation
       </div>
@@ -280,7 +281,7 @@ const noteClasses = (note: Note): string =>
       />
     </div>
 
-    <div>
+    <div :class="windApplies ? 'order-3' : 'order-5'">
       <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
         Wind
       </div>
@@ -378,7 +379,7 @@ const noteClasses = (note: Note): string =>
       </div>
     </div>
 
-    <div>
+    <div :class="waterApplies ? 'order-3' : 'order-5'">
       <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
         Waves &amp; current
       </div>
@@ -441,7 +442,9 @@ const noteClasses = (note: Note): string =>
       </div>
     </div>
 
-    <div class="flex justify-end">
+    <!-- Whatever the frame ignores sits below this row: the groups it can act on come first,
+         and Apply draws the line between what is worth setting and what is only explained. -->
+    <div class="order-4 flex justify-end">
       <v-btn
         size="small"
         color="primary"
