@@ -45,15 +45,11 @@ watch(() => loading.show, sync)
       <img
         :src="logo"
         alt=""
-        class="bluevue-loading__icon mb-3 h-[60px] w-[60px]"
+        class="bluevue-loading__icon mb-6 h-[100px] w-[100px]"
       >
-      <span class="text-center text-base text-white mb-5">
+      <span class="mt-[15px] text-center text-base text-white">
         {{ loading.message }}
       </span>
-      <div
-        class="bluevue-loading__bar w-full"
-        role="progressbar"
-      />
     </div>
   </dialog>
 </template>
@@ -81,35 +77,6 @@ watch(() => loading.show, sync)
   }
   100% {
     transform: rotate(1440deg);
-  }
-}
-
-/* An indeterminate bar: a short fill sweeping across a dim track, for progress that has no
-   percentage to report. */
-.bluevue-loading__bar {
-  position: relative;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 9999px;
-  background-color: #ffffff1f;
-}
-
-.bluevue-loading__bar::after {
-  content: "";
-  position: absolute;
-  inset-block: 0;
-  width: 40%;
-  border-radius: inherit;
-  background-color: var(--bluevue-primary);
-  animation: bluevue-sweep 1.4s ease-in-out infinite;
-}
-
-@keyframes bluevue-sweep {
-  from {
-    left: -40%;
-  }
-  to {
-    left: 100%;
   }
 }
 </style>
