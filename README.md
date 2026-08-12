@@ -23,6 +23,8 @@ Firmware page, the Parameter Editor and MAVProxy.
   chop, open ocean, storm). See below.
 - **Spawn location** — pick where SITL boots on a map, then apply. See below.
 
+<img width="1346" height="968" alt="image" src="https://github.com/user-attachments/assets/0cfa3129-3d68-4bc5-b73c-a6638ee69524" />
+
 ## Vehicle presets
 
 The Blue Robotics presets are composed from the parameter layers Blue Robotics publishes
