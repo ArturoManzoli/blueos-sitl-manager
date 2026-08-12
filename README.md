@@ -18,8 +18,10 @@ Firmware page, the Parameter Editor and MAVProxy.
   writing the vehicle's parameters. See below.
 - **Vehicle & frame** — the vehicle type (Sub / Rover / Plane / Copter) and SITL frame
   selectors, which move the row to Custom because the combination is yours rather than a
-  preset's. Nothing here reaches the vehicle until "Apply and restart" is pressed, and that
-  button stays disabled while the section says what the vehicle already is.
+  preset's. The frames offered are only the ones the chosen firmware can run, since each is
+  a physics model compiled into one vehicle's binary. Nothing here reaches the vehicle until
+  "Apply and restart" is pressed, and that button stays disabled while the section says what
+  the vehicle already is.
 - **Ambient conditions** — set ArduPilot `SIM_*` parameters (`SIM_WIND_*`, `SIM_WAVE_*`,
   `SIM_TIDE_*`, `SIM_SPEEDUP`) over MAVLink, with presets (calm pool, light chop, open
   ocean, storm) that fill the sliders for "Apply conditions" to write. See below.

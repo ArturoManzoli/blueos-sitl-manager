@@ -25,8 +25,9 @@ export const VehicleApi = {
   async status(): Promise<VehicleStatus> {
     return (await api.get<VehicleStatus>('/vehicle/status')).data
   },
-  async frames(): Promise<string[]> {
-    return (await api.get<string[]>('/vehicle/frames')).data
+  // Grouped by vehicle type, since a frame is a physics model built into one firmware.
+  async frames(): Promise<Partial<Record<VehicleType, string[]>>> {
+    return (await api.get<Partial<Record<VehicleType, string[]>>>('/vehicle/frames')).data
   },
   // Configuration changes run as a background job on the backend; these start one and
   // return its first snapshot, which callers then poll through applyJob().
