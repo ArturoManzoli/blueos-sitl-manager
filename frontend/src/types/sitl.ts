@@ -2,6 +2,10 @@ export interface Environment {
   wind_speed?: number | null
   wind_direction?: number | null
   wind_turbulence?: number | null
+  wind_elevation?: number | null
+  wind_variation?: number | null
+  wind_profile?: number | null
+  wind_full_altitude?: number | null
   wave_enable?: number | null
   wave_amplitude?: number | null
   wave_length?: number | null
@@ -18,6 +22,12 @@ export interface EnvironmentPreset {
   environment: Environment
 }
 
+export interface AppliedParams {
+  applied: string[]
+  // Written but not confirmed by a read-back, so the simulator may not be running them.
+  unverified: string[]
+}
+
 // Where SITL spawns, held in the vehicle's SIM_OPOS_* parameters.
 export interface SitlLocation {
   latitude: number
@@ -26,7 +36,16 @@ export interface SitlLocation {
   heading: number
 }
 
-export interface LocationPreset {
+// Common to both preset kinds. Set by the list endpoints and absent from the files that are
+// imported or exported, where they would only describe the install the file came from.
+export interface PresetOrigin {
+  // True for the presets that ship with the extension, which can be edited but not deleted.
+  builtin?: boolean | null
+  // True on a built-in a saved preset is currently shadowing, which reverts instead.
+  overridden?: boolean | null
+}
+
+export interface LocationPreset extends PresetOrigin {
   name: string
   location: SitlLocation
 }
@@ -41,14 +60,12 @@ export interface VehicleStatus {
 
 export type VehicleType = 'Sub' | 'Rover' | 'Plane' | 'Copter'
 
-export interface VehiclePreset {
+export interface VehiclePreset extends PresetOrigin {
   name: string
   description: string
   vehicle: VehicleType
   frame: string
   parameters: Record<string, number>
-  // Set by the preset list endpoint: true for built-ins, false for deletable customs.
-  builtin?: boolean | null
 }
 
 export type StepState = 'pending' | 'running' | 'done' | 'failed' | 'skipped'
@@ -84,6 +101,8 @@ export interface ApplyJob {
   current_param: string | null
   records: ParamRecord[]
   counts: Partial<Record<ParamOutcome, number>>
+  // Titles of the steps the user chose to skip after they failed.
+  skipped: string[]
   reported_vehicle: string | null
 }
 

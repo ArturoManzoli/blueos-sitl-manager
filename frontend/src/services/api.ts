@@ -1,6 +1,7 @@
 import axios from 'axios'
 
 import type {
+  AppliedParams,
   ApplyJob,
   Environment,
   EnvironmentPreset,
@@ -15,6 +16,10 @@ import type {
 // The extension and its backend are served from the same origin, so the API lives
 // under the versioned prefix relative to wherever BlueOS mounts the extension.
 const api = axios.create({ baseURL: 'v1.0' })
+
+// How many presets a row holds, built-ins included. The backend enforces this and refuses a
+// save past it; the panels only mirror it to grey the menu items out before that happens.
+export const MAX_PRESETS = 9
 
 export const VehicleApi = {
   async status(): Promise<VehicleStatus> {
@@ -37,6 +42,14 @@ export const VehicleApi = {
   async applyJob(): Promise<ApplyJob | null> {
     return (await api.get<ApplyJob | null>('/vehicle/apply-job')).data
   },
+  // Both act on the step that failed and then carry the same job on through the remaining
+  // steps; neither restarts the sequence from the beginning.
+  async retryApplyJob(): Promise<ApplyJob> {
+    return (await api.post<ApplyJob>('/vehicle/apply-job/retry')).data
+  },
+  async skipApplyJob(): Promise<ApplyJob> {
+    return (await api.post<ApplyJob>('/vehicle/apply-job/skip')).data
+  },
   async restart(): Promise<OperationResult> {
     return (await api.post<OperationResult>('/vehicle/restart')).data
   },
@@ -56,6 +69,11 @@ export const VehicleApi = {
   async importPreset(preset: VehiclePreset): Promise<VehiclePreset> {
     return (await api.post<VehiclePreset>('/vehicle/presets/import', preset)).data
   },
+  // Renaming a built-in copies it, since a built-in cannot be removed.
+  async renamePreset(name: string, newName: string): Promise<VehiclePreset> {
+    return (await api.post<VehiclePreset>(`/vehicle/presets/${encodeURIComponent(name)}/rename`, { name: newName })).data
+  },
+  // Deletes a saved preset, or reverts a built-in that a saved one was shadowing.
   async deletePreset(name: string): Promise<OperationResult> {
     return (await api.delete<OperationResult>(`/vehicle/presets/${encodeURIComponent(name)}`)).data
   },
@@ -65,14 +83,14 @@ export const EnvironmentApi = {
   async get(): Promise<Environment> {
     return (await api.get<Environment>('/environment')).data
   },
-  async set(environment: Environment): Promise<{ applied: string[] }> {
-    return (await api.post<{ applied: string[] }>('/environment', environment)).data
+  async set(environment: Environment): Promise<AppliedParams> {
+    return (await api.post<AppliedParams>('/environment', environment)).data
   },
   async presets(): Promise<EnvironmentPreset[]> {
     return (await api.get<EnvironmentPreset[]>('/environment/presets')).data
   },
-  async applyPreset(name: string): Promise<{ applied: string[] }> {
-    return (await api.post<{ applied: string[] }>(`/environment/presets/${encodeURIComponent(name)}`)).data
+  async applyPreset(name: string): Promise<AppliedParams> {
+    return (await api.post<AppliedParams>(`/environment/presets/${encodeURIComponent(name)}`)).data
   },
 }
 
@@ -87,5 +105,15 @@ export const LocationApi = {
   // loader for it.
   async set(location: SitlLocation): Promise<OperationResult> {
     return (await api.post<OperationResult>('/location', location)).data
+  },
+  // One endpoint for saving and for importing: both amount to storing a named location.
+  async savePreset(preset: LocationPreset): Promise<LocationPreset> {
+    return (await api.post<LocationPreset>('/location/presets', preset)).data
+  },
+  async renamePreset(name: string, newName: string): Promise<LocationPreset> {
+    return (await api.post<LocationPreset>(`/location/presets/${encodeURIComponent(name)}/rename`, { name: newName })).data
+  },
+  async deletePreset(name: string): Promise<OperationResult> {
+    return (await api.delete<OperationResult>(`/location/presets/${encodeURIComponent(name)}`)).data
   },
 }
