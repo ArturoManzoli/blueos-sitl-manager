@@ -10,7 +10,8 @@ would fight over it.
 """
 
 import asyncio
-from typing import Dict, Optional, Set
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Dict, NamedTuple, Optional, Set, Tuple
 
 from loguru import logger
 
@@ -25,7 +26,7 @@ from sitl_manager.models import (
     Vehicle,
     VehiclePreset,
 )
-from sitl_manager.settings import VEHICLE_READY_TIMEOUT
+from sitl_manager.settings import REBUILD_READY_TIMEOUT, VEHICLE_READY_TIMEOUT
 
 STEP_VEHICLE = "vehicle"
 STEP_FRAME = "frame"
@@ -34,13 +35,57 @@ STEP_PARAMETERS = "parameters"
 STEP_REBUILD = "rebuild"
 STEP_VERIFY = "verify"
 
-# A parameter write is echoed back by the autopilot, so the read-back that confirms it
-# normally lands on the first poll. This only has to cover a busy simulator.
-VERIFY_TIMEOUT = 0.6
-VERIFY_POLL = 0.05
-SEND_DELAY = 0.02
+# What the progress dialog labels each step on its step bar.
+STEP_TITLES = {
+    STEP_VEHICLE: "Vehicle type",
+    STEP_FRAME: "SITL frame",
+    STEP_BOOT: "Autopilot restart",
+    STEP_PARAMETERS: "Parameters",
+    STEP_REBUILD: "Frame rebuild",
+    STEP_VERIFY: "Verification",
+}
+
+# How many times a parameter is written before it is called a failure. A second write only
+# happens when the first one demonstrably did not take, so this costs nothing on a good link.
+PARAM_ATTEMPTS = 2
+
+# Long enough for the autopilot being replaced to fall silent before its successor is looked for.
+RESTART_SETTLE = 2.0
+
+
+class _Request(NamedTuple):
+    """What was asked for, kept so a failed job can be run again from the same inputs."""
+
+    title: str
+    vehicle: Optional[Vehicle]
+    frame: Optional[str]
+    params: Dict[str, float]
+
+
+@dataclass
+class _Progress:
+    """What the earlier stages worked out, for the later ones that depend on it.
+
+    ``forced`` names the step a retry asked to run again. Steps that would otherwise decide
+    they have nothing to do — the two restarts, which normally only run when something
+    upstream changed — run anyway when named here, because the user is asking for that step
+    rather than for the conditions that usually trigger it.
+    """
+
+    installed: bool = False
+    frame_changed: bool = False
+    written: int = 0
+    forced: Optional[str] = None
+
+    def wanted(self, key: str, condition: bool) -> bool:
+        return condition or self.forced == key
+
+
+_StageFn = Callable[[ApplyJob, _Request, _Progress], Awaitable[None]]
+
 
 _job: Optional[ApplyJob] = None
+_request: Optional[_Request] = None
 _task: Optional["asyncio.Task[None]"] = None
 _tasks: Set["asyncio.Task[None]"] = set()
 _next_id = 1
@@ -50,12 +95,23 @@ class JobBusyError(RuntimeError):
     """Raised when a configuration change is requested while another is still running."""
 
 
+class NoJobError(RuntimeError):
+    """Raised when a retry is requested before anything has been applied."""
+
+
 def current_job() -> Optional[ApplyJob]:
     return _job
 
 
 def is_running() -> bool:
     return _job is not None and _job.state is JobState.RUNNING
+
+
+def _spawn(work: Awaitable[None]) -> None:
+    global _task  # noqa: PLW0603 - one autopilot, one job
+    _task = asyncio.ensure_future(work)
+    _tasks.add(_task)
+    _task.add_done_callback(_tasks.discard)
 
 
 def _step(job: ApplyJob, key: str) -> ApplyStep:
@@ -80,19 +136,24 @@ def _record(job: ApplyJob, name: str, value: float, outcome: ParamOutcome) -> No
     job.params_done = len(job.records)
 
 
-def _matches(readback: float, target: float) -> bool:
-    return abs(readback - target) <= max(1e-3, abs(target) * 1e-3)
-
-
 async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
-    """Install the firmware for a vehicle type. Returns whether anything was installed."""
+    """Install the firmware for a vehicle type. Returns whether anything was installed.
+
+    Looking up the build is reported apart from fetching it because the lookup goes out to
+    ArduPilot's firmware index and can take the best part of a minute on its own, which is
+    otherwise a long silence on a step that claims to be downloading.
+    """
     _begin(job, STEP_VEHICLE, f"Checking the installed {vehicle.value} firmware")
     current = await autopilot.get_firmware_vehicle_type()
     if current and vehicle.value.lower() in str(current).lower():
         _finish(job, STEP_VEHICLE, f"Already running {current}", state=StepState.SKIPPED)
         return False
-    _begin(job, STEP_VEHICLE, f"Downloading and installing {vehicle.value} firmware")
-    name = await autopilot.install_stable_firmware(vehicle)
+    _begin(job, STEP_VEHICLE, f"Looking up the latest stable {vehicle.value} build")
+    firmware = await autopilot.latest_stable_firmware(vehicle)
+    name = str(firmware["name"])
+    logger.info(f"Installing {name} for {vehicle.value}")
+    _begin(job, STEP_VEHICLE, f"Downloading and installing {name}")
+    await autopilot.install_firmware_from_url(firmware["url"], make_default=True)
     _finish(job, STEP_VEHICLE, f"Installed {name}")
     return True
 
@@ -108,16 +169,26 @@ async def _apply_frame(job: ApplyJob, frame: str) -> bool:
     return True
 
 
-async def _boot(job: ApplyJob, key: str, restart: bool, detail: str) -> None:
+async def _boot(job: ApplyJob, key: str, restart: bool, detail: str, timeout: float = VEHICLE_READY_TIMEOUT) -> None:
     """Wait for the autopilot to serve parameters again, restarting it first if asked.
 
     A firmware install restarts the autopilot itself, so callers skip the restart in that
-    case and only wait for it to come back.
+    case and only wait for it to come back. How long a restart takes is unknowable, so the
+    step reports the seconds spent and what it is still missing instead of a fraction, giving
+    the dialog something that visibly moves while it waits.
     """
     _begin(job, key, detail)
     if restart:
         await autopilot.restart()
-    if not await mavlink.wait_until_ready(timeout=VEHICLE_READY_TIMEOUT):
+        # Readiness is judged from the heartbeat resuming, and the outgoing autopilot can get
+        # one more out after the restart call returns. Waiting it out means the heartbeat that
+        # ends this step belongs to the process we are about to write parameters to.
+        await asyncio.sleep(RESTART_SETTLE)
+    ready = await mavlink.wait_until_ready(
+        timeout=timeout,
+        on_wait=lambda waited, missing: _begin(job, key, f"{detail} — {missing} ({waited:.0f}s of {timeout:.0f}s)"),
+    )
+    if not ready:
         raise TimeoutError("The autopilot did not come back online in time.")
     _finish(job, key, "Autopilot online")
 
@@ -131,6 +202,10 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
     read back rather than assumed missing — only a parameter that never answers a read is
     reported as unsupported by this firmware.
     """
+    # Cleared rather than appended to, so retrying this step reports one pass, not two.
+    job.records.clear()
+    job.counts.clear()
+    job.params_done = 0
     job.params_total = len(params)
     _begin(job, STEP_PARAMETERS, "Reading current parameters")
     onboard = await mavlink.dump_all_params()
@@ -144,17 +219,15 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
         _begin(job, STEP_PARAMETERS, f"Sending parameter {job.params_done + 1}/{job.params_total}: {name}")
 
         current = onboard.get(name)
-        if current is not None and _matches(current, target):
+        if current is not None and mavlink.values_match(current, target):
             _record(job, name, target, ParamOutcome.UNCHANGED)
             continue
 
-        await mavlink.set_param(name, target)
-        await asyncio.sleep(SEND_DELAY)
-        readback = await mavlink.get_param(name, timeout=VERIFY_TIMEOUT, poll_interval=VERIFY_POLL)
+        readback = await mavlink.set_param_verified(name, target, attempts=PARAM_ATTEMPTS)
         if readback is None:
             _record(job, name, target, ParamOutcome.UNSUPPORTED)
             continue
-        if _matches(readback, target):
+        if mavlink.values_match(readback, target):
             written += 1
             _record(job, name, target, ParamOutcome.WRITTEN)
         else:
@@ -200,54 +273,109 @@ async def _verify(job: ApplyJob, expected: Optional[str]) -> None:
     _finish(job, STEP_VERIFY, f"Reported as {reported}")
 
 
-async def _run(
-    job: ApplyJob,
-    vehicle: Optional[Vehicle],
-    frame: Optional[str],
-    params: Dict[str, float],
-) -> None:
-    try:
-        installed = await _apply_vehicle(job, vehicle) if vehicle else False
-        frame_changed = await _apply_frame(job, frame) if frame else False
+async def _stage_vehicle(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
+    if request.vehicle is None:
+        _finish(job, STEP_VEHICLE, "Unchanged", state=StepState.SKIPPED)
+        return
+    progress.installed = await _apply_vehicle(job, request.vehicle)
 
-        if installed or frame_changed:
-            # A firmware install restarts the autopilot on its own.
-            await _boot(job, STEP_BOOT, restart=not installed, detail="Waiting for the autopilot to come back")
-        else:
-            _finish(job, STEP_BOOT, "No restart needed", state=StepState.SKIPPED)
 
-        if params:
-            written = await _apply_params(job, params)
-        else:
-            written = 0
-            _finish(job, STEP_PARAMETERS, "No parameters to send", state=StepState.SKIPPED)
+async def _stage_frame(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
+    if request.frame is None:
+        _finish(job, STEP_FRAME, "Unchanged", state=StepState.SKIPPED)
+        return
+    progress.frame_changed = await _apply_frame(job, request.frame)
 
-        if written:
-            # FRAME_CLASS/FRAME_CONFIG only rebuild the motor matrix on the next boot.
-            await _boot(job, STEP_REBUILD, restart=True, detail="Restarting to rebuild the motor matrix")
-        else:
-            _finish(job, STEP_REBUILD, "Nothing changed, no rebuild needed", state=StepState.SKIPPED)
 
-        await _verify(job, _expected_vehicle_type(vehicle, params))
+async def _stage_boot(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
+    if not progress.wanted(STEP_BOOT, progress.installed or progress.frame_changed):
+        _finish(job, STEP_BOOT, "No restart needed", state=StepState.SKIPPED)
+        return
+    # A firmware install restarts the autopilot on its own.
+    await _boot(job, STEP_BOOT, restart=not progress.installed, detail="Waiting for the autopilot to come back")
 
-        verify_failed = _step(job, STEP_VERIFY).state is StepState.FAILED
-        failed = job.counts.get(ParamOutcome.FAILED.value, 0)
-        if verify_failed:
-            job.state = JobState.FAILED
-            job.detail = f"{job.title}: {_step(job, STEP_VERIFY).detail}."
-        elif failed:
-            job.state = JobState.FAILED
-            job.detail = f"{job.title} applied, {failed} parameter(s) rejected."
-        else:
-            job.state = JobState.SUCCEEDED
-            job.detail = f"{job.title} applied."
-    except Exception as error:  # noqa: BLE001 - surfaced to the UI through the job
-        logger.error(f"{job.title} failed: {error}")
-        for step in job.steps:
-            if step.state is StepState.RUNNING:
-                step.state = StepState.FAILED
+
+async def _stage_parameters(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
+    params = request.params
+    if not params:
+        _finish(job, STEP_PARAMETERS, "No parameters to send", state=StepState.SKIPPED)
+        return
+    progress.written = await _apply_params(job, params)
+
+
+async def _stage_rebuild(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
+    if not progress.wanted(STEP_REBUILD, bool(progress.written)):
+        _finish(job, STEP_REBUILD, "Nothing changed, no rebuild needed", state=StepState.SKIPPED)
+        return
+    # FRAME_CLASS/FRAME_CONFIG only rebuild the motor matrix on the next boot.
+    await _boot(
+        job,
+        STEP_REBUILD,
+        restart=True,
+        detail="Restarting to rebuild the motor matrix",
+        timeout=REBUILD_READY_TIMEOUT,
+    )
+
+
+async def _stage_verify(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
+    await _verify(job, _expected_vehicle_type(request.vehicle, request.params))
+
+
+# In dependency order: firmware, then the frame it runs, then the reboot that loads both,
+# then the parameters, then the reboot that rebuilds the motor matrix from them, then the
+# check that the autopilot now calls itself what the preset says it is. A job runs this
+# from the top; a retry or a skip runs it from one step in.
+_STAGES: Tuple[Tuple[str, "_StageFn"], ...] = (
+    (STEP_VEHICLE, _stage_vehicle),
+    (STEP_FRAME, _stage_frame),
+    (STEP_BOOT, _stage_boot),
+    (STEP_PARAMETERS, _stage_parameters),
+    (STEP_REBUILD, _stage_rebuild),
+    (STEP_VERIFY, _stage_verify),
+)
+
+
+def _settle(job: ApplyJob) -> None:
+    """Decide the job's outcome from the state its steps ended in.
+
+    Parameters the autopilot rejected fail the parameter step itself, so that a failed job
+    always has exactly one step for a retry or a skip to act on.
+    """
+    rejected = job.counts.get(ParamOutcome.FAILED.value, 0)
+    parameters = _step(job, STEP_PARAMETERS)
+    if rejected and parameters.state is StepState.DONE:
+        parameters.state = StepState.FAILED
+        parameters.detail = f"{rejected} parameter(s) rejected by the autopilot"
+
+    failed = next((step for step in job.steps if step.state is StepState.FAILED), None)
+    if failed is not None:
         job.state = JobState.FAILED
-        job.detail = str(error) or error.__class__.__name__
+        job.detail = f"{job.title}: {failed.detail}."
+        return
+
+    job.state = JobState.SUCCEEDED
+    job.detail = f"{job.title} applied."
+    if job.skipped:
+        job.detail = f"{job.title} applied, skipped: {', '.join(job.skipped)}."
+
+
+async def _run(job: ApplyJob, request: "_Request", progress: "_Progress", start: int = 0) -> None:
+    """Walk the pipeline from ``start``, stopping at the first step that fails.
+
+    The step that raised is the one marked failed, rather than whichever step happened to be
+    running, so a failed job always offers retry and skip a single unambiguous target.
+    """
+    for key, stage in _STAGES[start:]:
+        try:
+            await stage(job, request, progress)
+        except Exception as error:  # noqa: BLE001 - surfaced to the UI through the job
+            logger.error(f"{job.title} failed on {key}: {error}")
+            reason = str(error) or error.__class__.__name__
+            _finish(job, key, reason, state=StepState.FAILED)
+            job.state = JobState.FAILED
+            job.detail = reason
+            return
+    _settle(job)
 
 
 def _start(
@@ -256,7 +384,7 @@ def _start(
     frame: Optional[str],
     params: Dict[str, float],
 ) -> ApplyJob:
-    global _job, _task, _next_id  # noqa: PLW0603 - one autopilot, one job
+    global _job, _request, _task, _next_id  # noqa: PLW0603 - one autopilot, one job
 
     if is_running():
         raise JobBusyError("Another configuration change is still running.")
@@ -264,15 +392,10 @@ def _start(
     job = ApplyJob(
         id=_next_id,
         title=title,
-        steps=[
-            ApplyStep(key=STEP_VEHICLE, title="Vehicle type"),
-            ApplyStep(key=STEP_FRAME, title="SITL frame"),
-            ApplyStep(key=STEP_BOOT, title="Autopilot restart"),
-            ApplyStep(key=STEP_PARAMETERS, title="Parameters"),
-            ApplyStep(key=STEP_REBUILD, title="Frame rebuild"),
-            ApplyStep(key=STEP_VERIFY, title="Verification"),
-        ],
+        steps=[ApplyStep(key=key, title=STEP_TITLES[key]) for key, _ in _STAGES],
     )
+    # Marked up front so the snapshot handed back to the frontend already shows what this
+    # request leaves alone, before the first stage has had a chance to run.
     if vehicle is None:
         _finish(job, STEP_VEHICLE, "Unchanged", state=StepState.SKIPPED)
     if frame is None:
@@ -280,10 +403,69 @@ def _start(
 
     _next_id += 1
     _job = job
-    _task = asyncio.create_task(_run(job, vehicle, frame, params))
-    _tasks.add(_task)
-    _task.add_done_callback(_tasks.discard)
+    _request = _Request(title, vehicle, frame, params)
+    _spawn(_run(job, _request, _Progress()))
     return job
+
+
+def _pending() -> Tuple[ApplyJob, int]:
+    """The job waiting on a decision, and the index of the step that failed."""
+    if is_running():
+        raise JobBusyError("Another configuration change is still running.")
+    if _job is None or _request is None:
+        raise NoJobError("There is no configuration change to resume.")
+    for index, (key, _) in enumerate(_STAGES):
+        if _step(_job, key).state is StepState.FAILED:
+            return _job, index
+    raise NoJobError("The last configuration change has no failed step.")
+
+
+def _resume(job: ApplyJob, start: int) -> ApplyJob:
+    """Carry the current job on from ``start``, leaving the steps before it as they are."""
+    assert _request is not None  # guaranteed by _pending
+    progress = _Progress(
+        # A restart triggered by an install in the previous run has already been waited on,
+        # so a restart step running now has to issue its own.
+        installed=False,
+        frame_changed=_step(job, STEP_FRAME).state is StepState.DONE,
+        written=job.counts.get(ParamOutcome.WRITTEN.value, 0),
+        forced=_STAGES[start][0] if start < len(_STAGES) else None,
+    )
+    for key, _ in _STAGES[start:]:
+        step = _step(job, key)
+        step.state = StepState.PENDING
+        step.detail = ""
+    job.state = JobState.RUNNING
+    job.detail = ""
+    _spawn(_run(job, _request, progress, start))
+    return job
+
+
+def retry() -> ApplyJob:
+    """Run the step that failed again, then carry on with the ones after it.
+
+    The steps that already succeeded are left untouched, so this repeats only the work that
+    did not land — the usual case being a restart that took longer than the autopilot was
+    given.
+    """
+    job, index = _pending()
+    return _resume(job, index)
+
+
+def skip() -> ApplyJob:
+    """Give up on the step that failed and carry on with the ones after it.
+
+    For when the step is not worth waiting on: a rebuild restart that the simulator is slow
+    to answer still leaves the parameters written, so the job can be taken to the end and
+    the vehicle checked. The skipped step is named in the job's summary, since skipping the
+    rebuild can mean the motor matrix is not live yet.
+    """
+    job, index = _pending()
+    step = _step(job, _STAGES[index][0])
+    step.state = StepState.SKIPPED
+    step.detail = "Skipped on request"
+    job.skipped.append(step.title)
+    return _resume(job, index + 1)
 
 
 def start_preset(preset: VehiclePreset) -> ApplyJob:

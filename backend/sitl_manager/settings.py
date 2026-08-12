@@ -48,6 +48,10 @@ HTTP_TIMEOUT = float(os.environ.get("SITL_HTTP_TIMEOUT", "10"))
 # install before giving up on applying a vehicle preset's parameters.
 VEHICLE_READY_TIMEOUT = float(os.environ.get("SITL_VEHICLE_READY_TIMEOUT", "120"))
 
+# The restart that rebuilds the motor matrix brings SITL up on a different frame, which
+# takes longer to answer than a plain reboot, so it gets an extra minute of grace.
+REBUILD_READY_TIMEOUT = float(os.environ.get("SITL_REBUILD_READY_TIMEOUT", str(VEHICLE_READY_TIMEOUT + 60)))
+
 # Installing firmware downloads and unpacks a SITL binary, which takes far longer than a
 # normal API call; it needs its own timeout so it is not killed by HTTP_TIMEOUT.
 FIRMWARE_INSTALL_TIMEOUT = float(os.environ.get("SITL_FIRMWARE_INSTALL_TIMEOUT", "300"))
