@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import ApplyProgressDialog from '@/components/ApplyProgressDialog.vue'
 import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
 import BlueSelect from '@/components/BlueSelect.vue'
+import NamePromptDialog from '@/components/NamePromptDialog.vue'
+import PresetMenu, { type PresetMenuItem } from '@/components/PresetMenu.vue'
 import { hideLoading, showLoading } from '@/composables/loading'
 import { notify, notifyError } from '@/composables/notify'
-import { VehicleApi } from '@/services/api'
+import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
+import { withWaitCursor } from '@/composables/waitCursor'
+import { MAX_PRESETS, VehicleApi } from '@/services/api'
 import type { ApplyJob, VehiclePreset, VehicleType } from '@/types/sitl'
 
 const emit = defineEmits<{ (event: 'changed'): void }>()
@@ -41,9 +45,13 @@ const explicitPresetName = ref<string | null>(null)
 
 const presetMenuOpen = ref(false)
 const saveDialogOpen = ref(false)
-const saveName = ref('')
-const saveDescription = ref('')
 const importInput = ref<HTMLInputElement | null>(null)
+
+// The preset a long press or right-click opened the actions menu on, and where to hang it.
+const contextPreset = ref<VehiclePreset | null>(null)
+const contextTarget = ref<[number, number]>([0, 0])
+const contextMenuOpen = ref(false)
+const renameDialogOpen = ref(false)
 
 const vehicleItems = computed(() => vehicleTypes.map((value) => ({ name: value, value })))
 // Keep the running frame selectable even when it is not one of the curated SITL frames,
@@ -73,10 +81,84 @@ const presetButtons = computed<PresetButton[]>(() => {
   return buttons
 })
 
-// Only user-saved/imported presets carry builtin === false and can be deleted.
-const activePresetIsCustom = computed(
-  () => presets.value.find((preset) => preset.name === activePresetName.value)?.builtin === false
-)
+const presetsFull = computed(() => presets.value.length >= MAX_PRESETS)
+const fullHint = computed(() => (presetsFull.value ? `The row holds ${MAX_PRESETS} presets; delete one first` : undefined))
+
+// Applying anything here reconfigures the autopilot, which on a real board would mean
+// reflashing it, so the vehicle actions wait for the simulator. Everything that only moves
+// presets around — importing, renaming, exporting a stored one, deleting — stays available.
+const locked = computed(() => busy.value || !isSitl.value)
+const sitlHint = computed(() => (isSitl.value ? undefined : 'Only available on a SITL board'))
+const vehicleActionHint = computed(() => fullHint.value ?? sitlHint.value)
+
+// The three-dots menu, which acts on the vehicle rather than on any one preset.
+const presetActions = computed<PresetMenuItem[]>(() => [
+  {
+    title: 'Save current config as preset',
+    icon: 'mdi-content-save-outline',
+    disabled: presetsFull.value || !isSitl.value,
+    hint: vehicleActionHint.value,
+    action: () => (saveDialogOpen.value = true),
+  },
+  {
+    title: 'Download preset file',
+    icon: 'mdi-download-outline',
+    disabled: !isSitl.value,
+    hint: sitlHint.value,
+    action: downloadPreset,
+  },
+  {
+    title: 'Import preset file',
+    icon: 'mdi-upload-outline',
+    disabled: presetsFull.value,
+    hint: fullHint.value,
+    action: () => importInput.value?.click(),
+  },
+])
+
+// What a long press offers for one preset. A built-in can be reloaded, edited, renamed (as a
+// copy) and exported, but never deleted: an edited one is reverted to its shipped definition
+// instead, which is what keeps the curated presets impossible to lose.
+const contextItems = computed<PresetMenuItem[]>(() => {
+  const preset = contextPreset.value
+  if (!preset) {
+    return []
+  }
+  const items: PresetMenuItem[] = [
+    {
+      title: 'Reload profile',
+      icon: 'mdi-refresh',
+      disabled: !isSitl.value,
+      hint: sitlHint.value,
+      action: () => applyPreset(preset),
+    },
+    {
+      title: 'Save current config here',
+      icon: 'mdi-content-save-outline',
+      disabled: !isSitl.value,
+      hint: sitlHint.value,
+      action: () => overwritePreset(preset),
+    },
+    { title: 'Rename…', icon: 'mdi-rename-box-outline', action: () => (renameDialogOpen.value = true) },
+    { title: 'Export to file', icon: 'mdi-download-outline', action: () => triggerDownload(preset) },
+  ]
+  if (preset.overridden) {
+    items.push({
+      title: 'Revert to built-in',
+      icon: 'mdi-backup-restore',
+      danger: true,
+      action: () => removePreset(preset),
+    })
+  } else if (!preset.builtin) {
+    items.push({
+      title: 'Delete profile',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      action: () => removePreset(preset),
+    })
+  }
+  return items
+})
 
 async function loadFrames(): Promise<void> {
   try {
@@ -96,16 +178,20 @@ async function loadPresets(): Promise<void> {
 
 async function loadActivePreset(): Promise<void> {
   try {
-    const detected = (await VehicleApi.activePreset()) ?? CUSTOM_PRESET
-    // Honor an explicitly-applied custom preset over detection, which cannot recognize it.
+    const detected = await VehicleApi.activePreset()
     const explicit = presets.value.find((preset) => preset.name === explicitPresetName.value)
-    if (explicit?.builtin === false) {
+    // What was applied wins over detection in two cases: a custom preset, which detection
+    // cannot recognize (it is a dump of the built-in it came from and shares its
+    // frame-defining parameter, so it would be reported as its cousin), and a detection that
+    // came back empty, which is a parameter read that did not answer rather than a vehicle
+    // that matches nothing.
+    if (explicit && (!explicit.builtin || !detected)) {
       activePresetName.value = explicit.name
       return
     }
-    activePresetName.value = detected
+    activePresetName.value = detected ?? CUSTOM_PRESET
   } catch {
-    activePresetName.value = CUSTOM_PRESET
+    // Leave the row as it was: an unanswered read is not evidence the vehicle changed.
   }
 }
 
@@ -122,7 +208,7 @@ function vehicleTypeFromFirmware(firmware: string | null): VehicleType | null {
 async function syncFromStatus(): Promise<void> {
   syncing.value = true
   try {
-    const status = await VehicleApi.status()
+    const status = await refreshVehicleStatus()
     const vehicle = vehicleTypeFromFirmware(status.firmware_vehicle_type)
     if (vehicle) {
       selectedVehicle.value = vehicle
@@ -138,18 +224,23 @@ async function syncFromStatus(): Promise<void> {
   }
 }
 
-async function refresh(): Promise<void> {
+// Driven by the view rather than onMounted, which is what lets the overlay stay up until
+// every panel has something to show. The preset list is read before the active preset is
+// resolved, since resolving it means matching against that list.
+async function reload(): Promise<void> {
+  await Promise.all([loadFrames(), loadPresets()])
   await Promise.all([loadActivePreset(), syncFromStatus()])
 }
 
-defineExpose({ refresh })
+defineExpose({ reload })
 
 // Every configuration change runs as a backend job; start it, then hand the first
-// snapshot to the progress dialog, which polls the rest.
+// snapshot to the progress dialog, which polls the rest. Starting one takes long enough to
+// notice, and nothing has appeared yet at that point, so the pointer carries the wait.
 async function startJob(start: () => Promise<ApplyJob>, failureMessage: string): Promise<boolean> {
   busy.value = true
   try {
-    progressJob.value = await start()
+    progressJob.value = await withWaitCursor(start)
     progressOpen.value = true
     return true
   } catch (error) {
@@ -180,11 +271,31 @@ async function applyVehicle(vehicle: VehicleType): Promise<void> {
   }
 }
 
-async function onJobFinished(job: ApplyJob): Promise<void> {
+// A finished job leaves its result on screen until the user dismisses it, so the page is
+// re-read when the dialog closes rather than when the job ends: everything on the page still
+// describes the vehicle that existed before the change, and throwing the overlay over a
+// dialog somebody is still reading would hide the outcome they were looking at. Set on a
+// failed job too — a half-applied change moves the page just as much as a whole one.
+const changedByJob = ref(false)
+
+function onJobFinished(job: ApplyJob): void {
   busy.value = false
+  changedByJob.value = true
   notify(job.detail, job.state === 'succeeded' ? 'success' : 'warning')
-  await refresh()
+}
+
+watch(progressOpen, (open) => {
+  if (open || !changedByJob.value) {
+    return
+  }
+  changedByJob.value = false
   emit('changed')
+})
+
+// Retried from the progress dialog, so the selectors go back to being locked.
+function onJobRestarted(job: ApplyJob): void {
+  progressJob.value = job
+  busy.value = true
 }
 
 watch(selectedVehicle, (vehicle, previous) => {
@@ -199,21 +310,10 @@ watch(selectedFrame, (frame, previous) => {
   }
 })
 
-function openSaveDialog(): void {
-  saveName.value = ''
-  saveDescription.value = ''
-  saveDialogOpen.value = true
-}
-
-async function confirmSavePreset(): Promise<void> {
-  const name = saveName.value.trim()
-  if (!name) {
-    return
-  }
-  saveDialogOpen.value = false
+async function confirmSavePreset(name: string, description: string): Promise<void> {
   showLoading('Saving current configuration as a preset… reading all parameters.')
   try {
-    const preset = await VehicleApi.savePreset(name, saveDescription.value.trim())
+    const preset = await VehicleApi.savePreset(name, description)
     await loadPresets()
     await loadActivePreset()
     notify(`Saved preset "${preset.name}" with ${Object.keys(preset.parameters).length} parameters.`, 'success')
@@ -245,17 +345,71 @@ async function downloadPreset(): Promise<void> {
   }
 }
 
-async function deleteActivePreset(): Promise<void> {
-  const name = activePresetName.value
-  showLoading(`Deleting preset "${name}"…`)
+function onPresetContextMenu({ item, x, y }: { item: { name: string }; x: number; y: number }): void {
+  const preset = presets.value.find((candidate) => candidate.name === item.name)
+  // The trailing 'Custom' button reports the configuration rather than naming a preset, so
+  // there is nothing to act on there.
+  if (!preset) {
+    return
+  }
+  contextPreset.value = preset
+  contextTarget.value = [x, y]
+  contextMenuOpen.value = true
+}
+
+// Re-captures the running vehicle under an existing name. On a built-in this stores an
+// override that shadows the shipped definition until it is reverted.
+async function overwritePreset(preset: VehiclePreset): Promise<void> {
+  showLoading(`Saving the current configuration as "${preset.name}"… reading all parameters.`)
   try {
-    await VehicleApi.deletePreset(name)
-    explicitPresetName.value = null
+    const saved = await VehicleApi.savePreset(preset.name, preset.description)
+    await loadPresets()
+    notify(`Updated "${saved.name}" with the current configuration.`, 'success')
+  } catch (error) {
+    notifyError(error, `Could not update ${preset.name}`)
+  } finally {
+    hideLoading()
+  }
+}
+
+async function confirmRenamePreset(newName: string): Promise<void> {
+  const preset = contextPreset.value
+  if (!preset) {
+    return
+  }
+  showLoading(`Renaming "${preset.name}"…`)
+  try {
+    await VehicleApi.renamePreset(preset.name, newName)
+    if (explicitPresetName.value === preset.name) {
+      explicitPresetName.value = newName
+    }
     await loadPresets()
     await loadActivePreset()
-    notify(`Deleted preset "${name}".`, 'success')
+    notify(
+      preset.builtin
+        ? `Copied "${preset.name}" to "${newName}"; the built-in stays in place.`
+        : `Renamed "${preset.name}" to "${newName}".`,
+      'success'
+    )
   } catch (error) {
-    notifyError(error, 'Could not delete preset')
+    notifyError(error, `Could not rename ${preset.name}`)
+  } finally {
+    hideLoading()
+  }
+}
+
+async function removePreset(preset: VehiclePreset): Promise<void> {
+  showLoading(preset.builtin ? `Reverting "${preset.name}"…` : `Deleting preset "${preset.name}"…`)
+  try {
+    const result = await VehicleApi.deletePreset(preset.name)
+    if (explicitPresetName.value === preset.name) {
+      explicitPresetName.value = null
+    }
+    await loadPresets()
+    await loadActivePreset()
+    notify(result.detail, 'success')
+  } catch (error) {
+    notifyError(error, `Could not delete ${preset.name}`)
   } finally {
     hideLoading()
   }
@@ -281,76 +435,44 @@ async function onImportFileSelected(event: Event): Promise<void> {
     hideLoading()
   }
 }
-
-onMounted(() => {
-  loadFrames()
-  loadPresets()
-  refresh()
-})
 </script>
 
 <template>
   <div class="flex flex-col gap-5">
     <div class="flex items-center gap-2">
-      <div class="flex-1">
+      <div class="flex-1 min-w-0">
         <BlueButtonGroup
           v-if="presetButtons.length"
           :key="activePresetName"
           label="Vehicle preset"
           theme="dark"
           type="switch"
-          :disabled="busy"
+          :disabled="locked"
           :button-items="presetButtons"
-          info-tooltip="Presets install the matching firmware, set the SITL frame and write the vehicle's defining parameters (motor mapping, battery, tuning), then restart the autopilot."
+          info-tooltip="Presets install the matching firmware, set the SITL frame and write the vehicle's defining parameters (motor mapping, battery, tuning), then restart the autopilot. Hold or right-click a preset for its own actions."
+          @context-menu="onPresetContextMenu"
         />
       </div>
-      <v-menu
+      <PresetMenu
         v-model="presetMenuOpen"
-        location="bottom end"
+        :items="presetActions"
       >
         <template #activator="{ props: menuProps }">
           <button
             v-bind="menuProps"
-            class="rounded-[6px] px-1 py-1 text-[#ffffffaa] hover:text-white transition-colors"
+            class="shrink-0 rounded-[6px] px-1 py-1 text-[#ffffffaa] hover:text-white transition-colors"
             :class="busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"
             title="Preset actions"
           >
             <v-icon>mdi-dots-vertical</v-icon>
           </button>
         </template>
-        <v-list
-          density="compact"
-          bg-color="#2d2d2d"
-          class="py-0"
-        >
-          <v-list-item
-            prepend-icon="mdi-content-save-outline"
-            title="Save current config as preset"
-            @click="openSaveDialog"
-          />
-          <div class="h-px bg-[#ffffff0d]" />
-          <v-list-item
-            prepend-icon="mdi-download-outline"
-            title="Download preset file"
-            @click="downloadPreset"
-          />
-          <div class="h-px bg-[#ffffff0d]" />
-          <v-list-item
-            prepend-icon="mdi-upload-outline"
-            title="Import preset file"
-            @click="importInput?.click()"
-          />
-          <template v-if="activePresetIsCustom">
-            <div class="h-px bg-[#ffffff0d]" />
-            <v-list-item
-              prepend-icon="mdi-delete-outline"
-              title="Delete this preset"
-              base-color="#ff6b6b"
-              @click="deleteActivePreset"
-            />
-          </template>
-        </v-list>
-      </v-menu>
+      </PresetMenu>
+      <PresetMenu
+        v-model="contextMenuOpen"
+        :items="contextItems"
+        :target="contextTarget"
+      />
       <input
         ref="importInput"
         type="file"
@@ -365,7 +487,7 @@ onMounted(() => {
       label="Vehicle type"
       theme="dark"
       width="200px"
-      :disabled="busy"
+      :disabled="locked"
       :items="vehicleItems"
       info-tooltip="Applied on selection: installs the matching SITL firmware and restarts the autopilot."
     />
@@ -374,7 +496,7 @@ onMounted(() => {
       label="SITL frame"
       theme="dark"
       width="200px"
-      :disabled="busy"
+      :disabled="locked"
       :items="frameItems"
       info-tooltip="Applied on selection. The frame supplies the simulated physics and only takes effect after the autopilot restarts."
     />
@@ -383,59 +505,33 @@ onMounted(() => {
       v-model="progressOpen"
       :initial="progressJob"
       @finished="onJobFinished"
+      @restarted="onJobRestarted"
     />
 
-    <v-dialog
+    <NamePromptDialog
+      v-model="renameDialogOpen"
+      icon="mdi-rename-box-outline"
+      title="Rename preset"
+      label="New name"
+      confirm-label="Rename"
+      :initial="contextPreset?.name"
+      :subtitle="
+        contextPreset?.builtin
+          ? `${contextPreset.name} is built in and stays where it is, so this saves a copy under the new name.`
+          : `Renames ${contextPreset?.name}, keeping its vehicle type, frame and parameters.`
+      "
+      @confirm="confirmRenamePreset"
+    />
+
+    <NamePromptDialog
       v-model="saveDialogOpen"
-      width="420"
-    >
-      <v-card
-        color="#2d2d2d"
-        class="text-white"
-      >
-        <v-card-title class="text-base">
-          Save current configuration
-        </v-card-title>
-        <v-card-text class="flex flex-col gap-3">
-          <p class="text-xs text-[#ffffff88] leading-relaxed">
-            Captures the running vehicle's type, SITL frame and every parameter into a new
-            preset you can re-apply or export later.
-          </p>
-          <v-text-field
-            v-model="saveName"
-            label="Preset name"
-            density="compact"
-            variant="outlined"
-            autofocus
-            hide-details
-            @keydown.enter="confirmSavePreset"
-          />
-          <v-text-field
-            v-model="saveDescription"
-            label="Description (optional)"
-            density="compact"
-            variant="outlined"
-            hide-details
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn
-            size="small"
-            @click="saveDialogOpen = false"
-          >
-            Cancel
-          </v-btn>
-          <v-btn
-            size="small"
-            color="primary"
-            :disabled="!saveName.trim()"
-            @click="confirmSavePreset"
-          >
-            Save
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+      icon="mdi-content-save-outline"
+      title="Save current configuration"
+      subtitle="Captures the running vehicle's type, SITL frame and every parameter into a preset you can re-apply or export later."
+      label="Preset name"
+      notes-label="Description (optional)"
+      hint="Reads every parameter, so this takes a moment."
+      @confirm="confirmSavePreset"
+    />
   </div>
 </template>
