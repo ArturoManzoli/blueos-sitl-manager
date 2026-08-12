@@ -1,10 +1,17 @@
 # syntax=docker/dockerfile:1
 
 # ---- Frontend build ----
-FROM node:20-alpine AS frontend-builder
+# Runs on the build machine's own architecture rather than the target's, since this stage only
+# produces static files: no emulation when cross-building the arm images, and no need for a
+# toolchain that exists for every target. Debian rather than Alpine because lightningcss (via
+# Tailwind) ships no prebuilt binary for 32-bit ARM on musl, which is what a Pi running the
+# armhf userspace would land on.
+FROM --platform=$BUILDPLATFORM node:20-bookworm-slim AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json frontend/yarn.lock* ./
-RUN yarn install --frozen-lockfile || yarn install
+# Strict: a lockfile that does not match package.json should fail the build rather than quietly
+# resolve a different dependency tree than the one that was tested.
+RUN yarn install --frozen-lockfile
 COPY frontend/ ./
 RUN yarn build
 
