@@ -366,10 +366,6 @@ VEHICLE_PRESETS: List[VehiclePreset] = [
 ]
 
 
-def is_builtin_preset_name(name: str) -> bool:
-    return any(preset.name == name for preset in VEHICLE_PRESETS)
-
-
 PresetT = TypeVar("PresetT", bound=NamedPreset)
 
 

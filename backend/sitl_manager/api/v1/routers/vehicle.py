@@ -3,25 +3,21 @@ from typing import Callable, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, status
 from fastapi_versioning import versioned_api_route
 
-from sitl_manager import apply_job, autopilot, mavlink
-from sitl_manager.api.common import to_http_exception
-from sitl_manager import custom_presets
+from sitl_manager import apply_job, autopilot, custom_presets, mavlink
+from sitl_manager.api.common import require_sitl, to_http_exception
 from sitl_manager.models import (
     ActivePreset,
     ApplyJob,
     FrameRequest,
     OperationResult,
+    RenamePresetRequest,
     SavePresetRequest,
     Vehicle,
     VehiclePreset,
     VehicleStatus,
     VehicleTypeRequest,
 )
-from sitl_manager.presets import (
-    PRESET_EXCLUDED_PREFIXES,
-    all_vehicle_presets,
-    is_builtin_preset_name,
-)
+from sitl_manager.presets import PRESET_EXCLUDED_PREFIXES, all_vehicle_presets
 
 # The frame-defining parameter that distinguishes the presets of each vehicle family:
 # FRAME_CONFIG separates BlueROV2 (1) from BlueROV2 Heavy (2); FRAME_CLASS identifies the
@@ -34,6 +30,11 @@ FRAME_PARAM_BY_VEHICLE = {
     Vehicle.COPTER: "FRAME_CLASS",
 }
 
+# How patiently that parameter is read. Short enough that the panel is not left waiting on a
+# firmware which does not have it, repeated enough to ride out an autopilot still settling.
+FRAME_PARAM_TIMEOUT = 1.5
+FRAME_PARAM_ATTEMPTS = 3
+
 # ArduPilot Manager reports the firmware type as e.g. "ArduSub"; map it to our enum.
 FIRMWARE_TYPE_TO_VEHICLE = {
     Vehicle.SUB: "sub",
@@ -41,6 +42,20 @@ FIRMWARE_TYPE_TO_VEHICLE = {
     Vehicle.PLANE: "plane",
     Vehicle.COPTER: "copter",
 }
+
+
+async def _read_frame_param(param: str) -> Optional[float]:
+    """Read a frame-defining parameter, allowing for an autopilot that just came back.
+
+    Detection runs right after a configuration change, when a read can land while the
+    simulator is still finding its feet. One unanswered read would report a vehicle that
+    matches no preset at all, so it gets a few tries before that is believed.
+    """
+    for _ in range(FRAME_PARAM_ATTEMPTS):
+        value = await mavlink.get_param(param, timeout=FRAME_PARAM_TIMEOUT)
+        if value is not None:
+            return value
+    return None
 
 
 async def _detect_active_preset(vehicle_type: str) -> Optional[str]:
@@ -57,7 +72,7 @@ async def _detect_active_preset(vehicle_type: str) -> Optional[str]:
         if expected is None:
             continue
         if param not in readings:
-            readings[param] = await mavlink.get_param(param, timeout=1.5)
+            readings[param] = await _read_frame_param(param)
         actual = readings[param]
         if actual is not None and round(actual) == round(expected):
             return preset.name
@@ -76,12 +91,7 @@ def _vehicle_from_firmware(firmware_type: Optional[str]) -> Optional[Vehicle]:
 
 async def _build_current_config_preset(name: str, description: str) -> VehiclePreset:
     """Snapshot the running SITL vehicle (type, frame and every non-SIM_ parameter)."""
-    board = await autopilot.get_board()
-    if not autopilot.is_sitl(board):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="The active board is not SITL; cannot capture a configuration.",
-        )
+    await require_sitl("there is no simulated configuration to capture")
     vehicle = _vehicle_from_firmware(await autopilot.get_firmware_vehicle_type())
     if vehicle is None:
         raise HTTPException(
@@ -146,6 +156,8 @@ def _start_job(start: Callable[[], ApplyJob]) -> ApplyJob:
         return start()
     except apply_job.JobBusyError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except apply_job.NoJobError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
 
 
 @vehicle_router.get(
@@ -158,21 +170,44 @@ async def apply_job_status() -> Optional[ApplyJob]:
     return apply_job.current_job()
 
 
+@vehicle_router.post(
+    "/apply-job/retry",
+    response_model=ApplyJob,
+    summary="Run the step that failed again and carry on from there.",
+)
+@to_http_exception
+async def retry_apply_job() -> ApplyJob:
+    return _start_job(apply_job.retry)
+
+
+@vehicle_router.post(
+    "/apply-job/skip",
+    response_model=ApplyJob,
+    summary="Skip the step that failed and carry on with the rest.",
+)
+@to_http_exception
+async def skip_apply_job() -> ApplyJob:
+    return _start_job(apply_job.skip)
+
+
 @vehicle_router.post("/frame", response_model=ApplyJob, summary="Set the SITL frame and restart.")
 @to_http_exception
 async def set_frame(request: FrameRequest) -> ApplyJob:
+    await require_sitl("the frame only describes a simulated vehicle")
     return _start_job(lambda: apply_job.start_frame(request.frame))
 
 
 @vehicle_router.post("/type", response_model=ApplyJob, summary="Switch the SITL vehicle type (installs firmware).")
 @to_http_exception
 async def set_type(request: VehicleTypeRequest) -> ApplyJob:
+    await require_sitl("switching vehicle type would reflash the connected autopilot")
     return _start_job(lambda: apply_job.start_vehicle(request.vehicle))
 
 
 @vehicle_router.post("/restart", response_model=OperationResult, summary="Restart the autopilot.")
 @to_http_exception
 async def restart() -> OperationResult:
+    await require_sitl("only the simulated autopilot is restarted from here")
     await autopilot.restart()
     return OperationResult(success=True, detail="Autopilot restarted.")
 
@@ -208,20 +243,25 @@ async def current_config() -> VehiclePreset:
     )
 
 
+def _builtin_names() -> List[str]:
+    return [preset.name for preset in all_vehicle_presets() if preset.builtin]
+
+
 @vehicle_router.post(
     "/presets/save",
     response_model=VehiclePreset,
-    summary="Save the running SITL configuration as a named custom preset.",
+    summary="Save the running SITL configuration as a preset, replacing one of the same name.",
 )
 @to_http_exception
 async def save_current_preset(request: SavePresetRequest) -> VehiclePreset:
-    if is_builtin_preset_name(request.name):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"'{request.name}' is a built-in preset name; choose another.",
-        )
+    """Capture what SITL is running now under a name.
+
+    A built-in name is allowed and shadows the curated definition, which is how a built-in
+    gets edited. Reverting it later is a delete away.
+    """
+    custom_presets.ensure_room(custom_presets.VEHICLE_STORE, _builtin_names(), request.name)
     preset = await _build_current_config_preset(name=request.name, description=request.description)
-    custom_presets.save_custom_preset(preset)
+    custom_presets.VEHICLE_STORE.save(preset)
     return preset
 
 
@@ -232,30 +272,31 @@ async def save_current_preset(request: SavePresetRequest) -> VehiclePreset:
 )
 @to_http_exception
 async def import_preset(preset: VehiclePreset) -> VehiclePreset:
-    if is_builtin_preset_name(preset.name):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"'{preset.name}' is a built-in preset name; rename it before importing.",
-        )
-    custom_presets.save_custom_preset(preset)
+    custom_presets.ensure_room(custom_presets.VEHICLE_STORE, _builtin_names(), preset.name)
+    custom_presets.VEHICLE_STORE.save(preset)
     return preset
+
+
+@vehicle_router.post(
+    "/presets/{name}/rename",
+    response_model=VehiclePreset,
+    summary="Rename a vehicle preset; renaming a built-in copies it.",
+)
+@to_http_exception
+async def rename_preset(name: str, request: RenamePresetRequest) -> VehiclePreset:
+    return custom_presets.rename(custom_presets.VEHICLE_STORE, all_vehicle_presets(), name, request.name)
 
 
 @vehicle_router.delete(
     "/presets/{name}",
     response_model=OperationResult,
-    summary="Delete a user-saved custom vehicle preset.",
+    summary="Delete a saved vehicle preset, or revert an edited built-in.",
 )
 @to_http_exception
 async def delete_preset(name: str) -> OperationResult:
-    if is_builtin_preset_name(name):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"'{name}' is a built-in preset and cannot be deleted.",
-        )
-    if not custom_presets.delete_custom_preset(name):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown custom preset '{name}'.")
-    return OperationResult(success=True, detail=f"Deleted preset '{name}'.")
+    return OperationResult(
+        success=True, detail=custom_presets.remove(custom_presets.VEHICLE_STORE, _builtin_names(), name)
+    )
 
 
 @vehicle_router.post(
@@ -272,6 +313,7 @@ async def apply_vehicle_preset(name: str) -> ApplyJob:
     already holds, and restarts the autopilot so frame-defining parameters (FRAME_CLASS /
     FRAME_CONFIG) rebuild the motor matrix.
     """
+    await require_sitl("applying a preset would reflash and reconfigure the connected autopilot")
     match = next((item for item in all_vehicle_presets() if item.name == name), None)
     if match is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown vehicle preset '{name}'.")
