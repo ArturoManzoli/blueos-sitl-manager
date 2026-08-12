@@ -11,6 +11,7 @@
     "lint": "eslint . --ext .vue,.ts"
   },
   "dependencies": {
+    "@floating-ui/vue": "2.0.1",
     "@mdi/font": "7.4.47",
     "axios": "1.7.7",
     "leaflet": "1.9.4",
