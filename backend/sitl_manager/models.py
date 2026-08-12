@@ -20,6 +20,12 @@ class Environment(BaseModel):
     wind_speed: Optional[float] = Field(None, ge=0, description="SIM_WIND_SPD, m/s")
     wind_direction: Optional[float] = Field(None, ge=0, le=360, description="SIM_WIND_DIR, deg the wind comes from")
     wind_turbulence: Optional[float] = Field(None, ge=0, description="SIM_WIND_TURB")
+    wind_elevation: Optional[float] = Field(None, ge=-90, le=90, description="SIM_WIND_DIR_Z, deg above horizontal")
+    wind_variation: Optional[float] = Field(None, ge=0, description="SIM_WIND_TC, s for the wind to change")
+    wind_profile: Optional[int] = Field(None, ge=0, le=2, description="SIM_WIND_T 0:square law 1:none 2:linear")
+    wind_full_altitude: Optional[float] = Field(
+        None, ge=0, description="SIM_WIND_T_ALT, m where wind reaches full speed"
+    )
     wave_enable: Optional[int] = Field(None, ge=0, le=2, description="SIM_WAVE_ENABLE 0:off 1:roll/pitch 2:+heave")
     wave_amplitude: Optional[float] = Field(None, ge=0, description="SIM_WAVE_AMP, m")
     wave_length: Optional[float] = Field(None, gt=0, description="SIM_WAVE_LENGTH, m")
@@ -45,8 +51,21 @@ class Location(BaseModel):
     heading: float = Field(0.0, ge=0, le=360, description="Initial heading, degrees")
 
 
-class LocationPreset(BaseModel):
+class NamedPreset(BaseModel):
+    """Common ground for the preset kinds: a name, and how the API found it.
+
+    ``builtin`` and ``overridden`` are set when listing and left unset on the import and
+    export payloads, where they would only describe the install the file came from.
+    """
+
     name: str
+    builtin: Optional[bool] = None
+    # True on a built-in that a saved preset is currently shadowing. Such a preset cannot be
+    # deleted, only reverted to the curated definition, which is a different offer to make.
+    overridden: Optional[bool] = None
+
+
+class LocationPreset(NamedPreset):
     location: Location
 
 
@@ -73,20 +92,16 @@ class VehicleTypeRequest(BaseModel):
     vehicle: Vehicle
 
 
-class VehiclePreset(BaseModel):
+class VehiclePreset(NamedPreset):
     """A ready-to-fly SITL vehicle configuration: the autopilot firmware type, the SITL
     physics frame and the defining ArduPilot parameters (frame/motor mapping, battery,
     basic tuning). The SITL frame supplies the physics; the parameters configure the
     vehicle to behave like the real product."""
 
-    name: str
     description: str
     vehicle: Vehicle
     frame: str = Field(..., description="SITL --frame model, e.g. 'vectored' or 'motorboat-skid'.")
     parameters: Dict[str, float] = Field(default_factory=dict)
-    # Set by the API when listing presets: True for curated built-ins, False for the
-    # user-saved/imported presets that can be deleted. Unset on import/export payloads.
-    builtin: Optional[bool] = None
 
 
 class SavePresetRequest(BaseModel):
@@ -94,6 +109,12 @@ class SavePresetRequest(BaseModel):
 
     name: str = Field(..., min_length=1)
     description: str = ""
+
+
+class RenamePresetRequest(BaseModel):
+    """Rename a preset. Renaming a built-in copies it, since a built-in cannot be removed."""
+
+    name: str = Field(..., min_length=1)
 
 
 class StepState(str, Enum):
@@ -157,6 +178,9 @@ class ApplyJob(BaseModel):
     current_param: Optional[str] = None
     records: List[ParamRecord] = Field(default_factory=list)
     counts: Dict[str, int] = Field(default_factory=dict, description="Parameter records grouped by outcome")
+    skipped: List[str] = Field(
+        default_factory=list, description="Titles of steps the user chose to skip after they failed"
+    )
     reported_vehicle: Optional[str] = Field(
         None, description="Vehicle type the autopilot reports over MAVLink once reconfigured"
     )
@@ -178,3 +202,7 @@ class AppliedParams(BaseModel):
     """Echo of which parameters were written, useful for the frontend and for debugging."""
 
     applied: List[str] = Field(default_factory=list)
+    # Written but not confirmed: the autopilot either never answered for the name or still
+    # reports a different value. Listed so the UI can say the conditions are only partly set
+    # instead of reporting a clean success over a simulator that did not change.
+    unverified: List[str] = Field(default_factory=list)
