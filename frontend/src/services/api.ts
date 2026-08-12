@@ -30,11 +30,11 @@ export const VehicleApi = {
   },
   // Configuration changes run as a background job on the backend; these start one and
   // return its first snapshot, which callers then poll through applyJob().
-  async setFrame(frame: string): Promise<ApplyJob> {
-    return (await api.post<ApplyJob>('/vehicle/frame', { frame })).data
-  },
-  async setType(vehicle: VehicleType): Promise<ApplyJob> {
-    return (await api.post<ApplyJob>('/vehicle/type', { vehicle })).data
+  //
+  // Vehicle type and frame go together in one job: a combination chosen by hand often moves
+  // both, and sending them separately would install firmware and restart twice to get there.
+  async applyConfig(config: { vehicle?: VehicleType; frame?: string }): Promise<ApplyJob> {
+    return (await api.post<ApplyJob>('/vehicle/apply', config)).data
   },
   async applyPreset(name: string): Promise<ApplyJob> {
     return (await api.post<ApplyJob>(`/vehicle/presets/${encodeURIComponent(name)}/apply`)).data

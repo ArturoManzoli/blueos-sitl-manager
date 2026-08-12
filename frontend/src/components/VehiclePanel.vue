@@ -27,21 +27,31 @@ interface PresetButton {
 const vehicleTypes: VehicleType[] = ['Sub', 'Rover', 'Plane', 'Copter']
 const frames = ref<string[]>([])
 const presets = ref<VehiclePreset[]>([])
-const selectedFrame = ref<string | null>(null)
-const selectedVehicle = ref<VehicleType>('Sub')
 const busy = ref(false)
-// The selectors apply on change, so they are also written from the running vehicle's
-// state. This guards the watchers from firing on those programmatic updates.
+// Set while the fields are written from the vehicle or from a preset, so the watchers below
+// can tell a choice the user made from one they are only being shown.
 const syncing = ref(false)
 const progressJob = ref<ApplyJob | null>(null)
 const progressOpen = ref(false)
-// Which preset the running vehicle matches; 'Custom' when it matches none.
-const activePresetName = ref<string>(CUSTOM_PRESET)
-// The last preset the user explicitly applied via the button group. Detection only sees
-// built-in presets (a custom preset is a full dump of the built-in it derives from and
-// shares its frame-defining parameter), so without this it would downgrade an applied
-// custom preset to its built-in cousin and hide the delete action.
-const explicitPresetName = ref<string | null>(null)
+
+// What the section is set to, which is not what the vehicle is running until Apply is
+// pressed. Everything here — the two selectors and the highlighted preset — is a proposal.
+const selectedFrame = ref<string | null>(null)
+const selectedVehicle = ref<VehicleType>('Sub')
+const selectedPresetName = ref<string>(CUSTOM_PRESET)
+
+// What the vehicle was running when it was last read, which is what a proposal is measured
+// against to decide whether there is anything to apply.
+const appliedFrame = ref<string | null>(null)
+const appliedVehicle = ref<VehicleType | null>(null)
+const appliedPresetName = ref<string>(CUSTOM_PRESET)
+
+// The last preset the user applied, or 'Custom' for a combination they assembled themselves.
+// Detection is only consulted while this is null, because it answers with the built-in whose
+// frame-defining parameter the vehicle happens to share: a Rover left on a quad frame reads
+// as Ground Rover, and a saved preset reads as the built-in it was captured from. Either
+// answer would take the row off what the user chose.
+const userChoice = ref<string | null>(null)
 
 const presetMenuOpen = ref(false)
 const saveDialogOpen = ref(false)
@@ -49,6 +59,8 @@ const importInput = ref<HTMLInputElement | null>(null)
 
 // The preset a long press or right-click opened the actions menu on, and where to hang it.
 const contextPreset = ref<VehiclePreset | null>(null)
+// The Custom entry names no preset, so it opens a menu of its own.
+const contextCustom = ref(false)
 const contextTarget = ref<[number, number]>([0, 0])
 const contextMenuOpen = ref(false)
 const renameDialogOpen = ref(false)
@@ -67,19 +79,33 @@ const presetButtons = computed<PresetButton[]>(() => {
   const buttons: PresetButton[] = presets.value.map((preset) => ({
     name: preset.name,
     tooltip: preset.description,
-    preSelected: activePresetName.value === preset.name,
-    onSelected: () => {
-      applyPreset(preset)
-    },
+    preSelected: selectedPresetName.value === preset.name,
+    onSelected: () => selectPreset(preset),
   }))
   buttons.push({
     name: CUSTOM_PRESET,
-    tooltip: 'The current configuration does not match a preset',
-    preSelected: activePresetName.value === CUSTOM_PRESET,
-    onSelected: () => undefined,
+    tooltip: 'Whatever the two selectors below are set to, saved under a name of its own or left as an experiment',
+    preSelected: selectedPresetName.value === CUSTOM_PRESET,
+    onSelected: () => {
+      selectedPresetName.value = CUSTOM_PRESET
+    },
   })
   return buttons
 })
+
+// A preset says what to write; Custom means whatever the selectors are set to.
+const selectedPreset = computed(() => presets.value.find((preset) => preset.name === selectedPresetName.value) ?? null)
+
+const configChanged = computed(
+  () => selectedVehicle.value !== appliedVehicle.value || selectedFrame.value !== appliedFrame.value
+)
+
+// What Apply would actually do. Landing on Custom without touching the selectors changes
+// nothing, and re-applying the preset the vehicle already runs is what the preset's own
+// Reload is for, so neither arms the button.
+const pendingChange = computed(() =>
+  selectedPreset.value ? selectedPreset.value.name !== appliedPresetName.value : configChanged.value
+)
 
 const presetsFull = computed(() => presets.value.length >= MAX_PRESETS)
 const fullHint = computed(() => (presetsFull.value ? `The row holds ${MAX_PRESETS} presets; delete one first` : undefined))
@@ -89,15 +115,21 @@ const fullHint = computed(() => (presetsFull.value ? `The row holds ${MAX_PRESET
 // presets around — importing, renaming, exporting a stored one, deleting — stays available.
 const locked = computed(() => busy.value || !isSitl.value)
 const sitlHint = computed(() => (isSitl.value ? undefined : 'Only available on a SITL board'))
-const vehicleActionHint = computed(() => fullHint.value ?? sitlHint.value)
+
+// Saving captures the vehicle as it is running, so it is held back while the section is
+// proposing something else: the preset would carry the old configuration under a name the
+// user picked for the new one.
+const pendingHint = computed(() => (pendingChange.value ? 'Apply the pending changes first' : undefined))
+const saveDisabled = computed(() => presetsFull.value || !isSitl.value || pendingChange.value)
+const saveHint = computed(() => fullHint.value ?? sitlHint.value ?? pendingHint.value)
 
 // The three-dots menu, which acts on the vehicle rather than on any one preset.
 const presetActions = computed<PresetMenuItem[]>(() => [
   {
     title: 'Save current config as preset',
     icon: 'mdi-content-save-outline',
-    disabled: presetsFull.value || !isSitl.value,
-    hint: vehicleActionHint.value,
+    disabled: saveDisabled.value,
+    hint: saveHint.value,
     action: () => (saveDialogOpen.value = true),
   },
   {
@@ -116,16 +148,39 @@ const presetActions = computed<PresetMenuItem[]>(() => [
   },
 ])
 
+// What a long press offers on the Custom entry. Both roads lead to the same dialog: naming
+// the configuration is what turns it into a preset, and doing so hands Custom back empty for
+// the next experiment.
+const customItems = computed<PresetMenuItem[]>(() => [
+  {
+    title: 'Save as preset…',
+    icon: 'mdi-content-save-outline',
+    disabled: saveDisabled.value,
+    hint: saveHint.value,
+    action: () => (saveDialogOpen.value = true),
+  },
+  {
+    title: 'Rename…',
+    icon: 'mdi-rename-box-outline',
+    disabled: saveDisabled.value,
+    hint: saveHint.value,
+    action: () => (saveDialogOpen.value = true),
+  },
+])
+
 // What a long press offers for one preset. A built-in can be reloaded, edited, renamed (as a
 // copy) and exported, but never deleted: an edited one is reverted to its shipped definition
 // instead, which is what keeps the curated presets impossible to lose.
 const contextItems = computed<PresetMenuItem[]>(() => {
   const preset = contextPreset.value
   if (!preset) {
-    return []
+    return contextCustom.value ? customItems.value : []
   }
   const items: PresetMenuItem[] = [
     {
+      // The one place a preset is written to the vehicle without going through Apply: it
+      // asks for the preset the vehicle is already on to be laid down again, which the
+      // button cannot offer because that is not a change.
       title: 'Reload profile',
       icon: 'mdi-refresh',
       disabled: !isSitl.value,
@@ -176,20 +231,16 @@ async function loadPresets(): Promise<void> {
   }
 }
 
+// Which preset the vehicle is on. A choice the user made stands: detection is there to
+// recognise a vehicle nobody has told us about — the one found on a fresh page load — and
+// only ever answers with a built-in.
 async function loadActivePreset(): Promise<void> {
+  if (userChoice.value !== null) {
+    appliedPresetName.value = userChoice.value
+    return
+  }
   try {
-    const detected = await VehicleApi.activePreset()
-    const explicit = presets.value.find((preset) => preset.name === explicitPresetName.value)
-    // What was applied wins over detection in two cases: a custom preset, which detection
-    // cannot recognize (it is a dump of the built-in it came from and shares its
-    // frame-defining parameter, so it would be reported as its cousin), and a detection that
-    // came back empty, which is a parameter read that did not answer rather than a vehicle
-    // that matches nothing.
-    if (explicit && (!explicit.builtin || !detected)) {
-      activePresetName.value = explicit.name
-      return
-    }
-    activePresetName.value = detected ?? CUSTOM_PRESET
+    appliedPresetName.value = (await VehicleApi.activePreset()) ?? CUSTOM_PRESET
   } catch {
     // Leave the row as it was: an unanswered read is not evidence the vehicle changed.
   }
@@ -204,24 +255,31 @@ function vehicleTypeFromFirmware(firmware: string | null): VehicleType | null {
   return vehicleTypes.find((type) => firmware.toLowerCase().includes(type.toLowerCase())) ?? null
 }
 
-// Mirror the manual-configuration fields onto whatever the vehicle currently runs.
-async function syncFromStatus(): Promise<void> {
-  syncing.value = true
+// Read what the vehicle is running. Writing the fields is left to the caller, which does it
+// once the preset is known too, so the section never shows half of one state and half of
+// another.
+async function readStatus(): Promise<void> {
   try {
     const status = await refreshVehicleStatus()
-    const vehicle = vehicleTypeFromFirmware(status.firmware_vehicle_type)
-    if (vehicle) {
-      selectedVehicle.value = vehicle
-    }
-    if (status.frame) {
-      selectedFrame.value = status.frame
-    }
+    appliedVehicle.value = vehicleTypeFromFirmware(status.firmware_vehicle_type) ?? appliedVehicle.value
+    appliedFrame.value = status.frame ?? appliedFrame.value
   } catch {
     // Status is surfaced (and its errors reported) by the StatusPanel; stay quiet here.
-  } finally {
-    await nextTick()
-    syncing.value = false
   }
+}
+
+// Put the section back on the vehicle, dropping anything that was proposed and not applied.
+async function showApplied(): Promise<void> {
+  syncing.value = true
+  if (appliedVehicle.value) {
+    selectedVehicle.value = appliedVehicle.value
+  }
+  if (appliedFrame.value) {
+    selectedFrame.value = appliedFrame.value
+  }
+  selectedPresetName.value = appliedPresetName.value
+  await nextTick()
+  syncing.value = false
 }
 
 // Driven by the view rather than onMounted, which is what lets the overlay stay up until
@@ -229,7 +287,8 @@ async function syncFromStatus(): Promise<void> {
 // resolved, since resolving it means matching against that list.
 async function reload(): Promise<void> {
   await Promise.all([loadFrames(), loadPresets()])
-  await Promise.all([loadActivePreset(), syncFromStatus()])
+  await Promise.all([loadActivePreset(), readStatus()])
+  await showApplied()
 }
 
 defineExpose({ reload })
@@ -252,23 +311,26 @@ async function startJob(start: () => Promise<ApplyJob>, failureMessage: string):
 
 async function applyPreset(preset: VehiclePreset): Promise<void> {
   if (await startJob(() => VehicleApi.applyPreset(preset.name), `Could not apply ${preset.name}`)) {
-    activePresetName.value = preset.name
-    explicitPresetName.value = preset.name
+    userChoice.value = preset.name
   }
 }
 
-async function applyFrame(frame: string): Promise<void> {
-  if (await startJob(() => VehicleApi.setFrame(frame), 'Could not set frame')) {
-    activePresetName.value = CUSTOM_PRESET
-    explicitPresetName.value = null
+// Only what differs is sent: installing the firmware that is already running is work the job
+// would skip anyway, but naming it would still put a step on screen claiming to do it.
+async function applyConfig(): Promise<void> {
+  const config = {
+    vehicle: selectedVehicle.value !== appliedVehicle.value ? selectedVehicle.value : undefined,
+    frame: selectedFrame.value !== appliedFrame.value ? (selectedFrame.value ?? undefined) : undefined,
+  }
+  if (await startJob(() => VehicleApi.applyConfig(config), 'Could not apply the configuration')) {
+    userChoice.value = CUSTOM_PRESET
   }
 }
 
-async function applyVehicle(vehicle: VehicleType): Promise<void> {
-  if (await startJob(() => VehicleApi.setType(vehicle), 'Could not switch vehicle type')) {
-    activePresetName.value = CUSTOM_PRESET
-    explicitPresetName.value = null
-  }
+// Everything the section proposes lands here, and only here.
+async function applySelection(): Promise<void> {
+  const preset = selectedPreset.value
+  await (preset ? applyPreset(preset) : applyConfig())
 }
 
 // A finished job leaves its result on screen until the user dismisses it, so the page is
@@ -281,6 +343,11 @@ const changedByJob = ref(false)
 function onJobFinished(job: ApplyJob): void {
   busy.value = false
   changedByJob.value = true
+  // A job that stopped short leaves a vehicle that is nobody's idea of a preset, so the row
+  // gives up the name it was applying and reports whatever the vehicle now reads as.
+  if (job.state !== 'succeeded') {
+    userChoice.value = null
+  }
   notify(job.detail, job.state === 'succeeded' ? 'success' : 'warning')
 }
 
@@ -298,15 +365,27 @@ function onJobRestarted(job: ApplyJob): void {
   busy.value = true
 }
 
-watch(selectedVehicle, (vehicle, previous) => {
-  if (!syncing.value && previous && vehicle !== previous) {
-    applyVehicle(vehicle)
+// Picking a preset fills the selectors from it, so the section says what Apply will bring
+// about rather than leaving the vehicle it names to be taken on trust.
+async function selectPreset(preset: VehiclePreset): Promise<void> {
+  syncing.value = true
+  selectedPresetName.value = preset.name
+  selectedVehicle.value = preset.vehicle
+  // An imported or older preset can carry no frame, in which case it leaves the running one
+  // alone and the selector should keep showing it.
+  if (preset.frame) {
+    selectedFrame.value = preset.frame
   }
-})
+  await nextTick()
+  syncing.value = false
+}
 
-watch(selectedFrame, (frame, previous) => {
-  if (!syncing.value && previous && frame && frame !== previous) {
-    applyFrame(frame)
+// A combination the user assembles belongs to nobody's preset, so the row says so. Custom is
+// deliberately free-form: any pairing of vehicle type and frame can be tried from it, and
+// saving turns whichever one worked into a preset of its own.
+watch([selectedVehicle, selectedFrame], () => {
+  if (!syncing.value) {
+    selectedPresetName.value = CUSTOM_PRESET
   }
 })
 
@@ -315,7 +394,11 @@ async function confirmSavePreset(name: string, description: string): Promise<voi
   try {
     const preset = await VehicleApi.savePreset(name, description)
     await loadPresets()
-    await loadActivePreset()
+    // The vehicle now has a preset's name to go by, so the row moves onto it and Custom is
+    // left empty for the next experiment.
+    userChoice.value = preset.name
+    appliedPresetName.value = preset.name
+    selectedPresetName.value = preset.name
     notify(`Saved preset "${preset.name}" with ${Object.keys(preset.parameters).length} parameters.`, 'success')
   } catch (error) {
     notifyError(error, 'Could not save preset')
@@ -347,12 +430,11 @@ async function downloadPreset(): Promise<void> {
 
 function onPresetContextMenu({ item, x, y }: { item: { name: string }; x: number; y: number }): void {
   const preset = presets.value.find((candidate) => candidate.name === item.name)
-  // The trailing 'Custom' button reports the configuration rather than naming a preset, so
-  // there is nothing to act on there.
-  if (!preset) {
+  if (!preset && item.name !== CUSTOM_PRESET) {
     return
   }
-  contextPreset.value = preset
+  contextPreset.value = preset ?? null
+  contextCustom.value = !preset
   contextTarget.value = [x, y]
   contextMenuOpen.value = true
 }
@@ -380,11 +462,12 @@ async function confirmRenamePreset(newName: string): Promise<void> {
   showLoading(`Renaming "${preset.name}"…`)
   try {
     await VehicleApi.renamePreset(preset.name, newName)
-    if (explicitPresetName.value === preset.name) {
-      explicitPresetName.value = newName
+    if (userChoice.value === preset.name) {
+      userChoice.value = newName
     }
     await loadPresets()
     await loadActivePreset()
+    await showApplied()
     notify(
       preset.builtin
         ? `Copied "${preset.name}" to "${newName}"; the built-in stays in place.`
@@ -402,11 +485,14 @@ async function removePreset(preset: VehiclePreset): Promise<void> {
   showLoading(preset.builtin ? `Reverting "${preset.name}"…` : `Deleting preset "${preset.name}"…`)
   try {
     const result = await VehicleApi.deletePreset(preset.name)
-    if (explicitPresetName.value === preset.name) {
-      explicitPresetName.value = null
+    // The vehicle still runs what the preset described, but there is no longer a name for
+    // it, so the row falls back to what detection makes of the configuration.
+    if (userChoice.value === preset.name) {
+      userChoice.value = null
     }
     await loadPresets()
     await loadActivePreset()
+    await showApplied()
     notify(result.detail, 'success')
   } catch (error) {
     notifyError(error, `Could not delete ${preset.name}`)
@@ -443,13 +529,13 @@ async function onImportFileSelected(event: Event): Promise<void> {
       <div class="flex-1 min-w-0">
         <BlueButtonGroup
           v-if="presetButtons.length"
-          :key="activePresetName"
+          :key="selectedPresetName"
           label="Vehicle preset"
           theme="dark"
           type="switch"
           :disabled="locked"
           :button-items="presetButtons"
-          info-tooltip="Presets install the matching firmware, set the SITL frame and write the vehicle's defining parameters (motor mapping, battery, tuning), then restart the autopilot. Hold or right-click a preset for its own actions."
+          info-tooltip="Picking a preset fills the fields below with the firmware, SITL frame and defining parameters (motor mapping, battery, tuning) it describes; Apply writes them and restarts the autopilot. Custom is whatever combination you set yourself, and can be saved as a preset of its own. Hold or right-click an entry for its own actions."
           @context-menu="onPresetContextMenu"
         />
       </div>
@@ -489,7 +575,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
       width="200px"
       :disabled="locked"
       :items="vehicleItems"
-      info-tooltip="Applied on selection: installs the matching SITL firmware and restarts the autopilot."
+      info-tooltip="Which firmware Apply installs. Choosing one by hand moves the row to Custom, since the combination is yours rather than a preset's."
     />
     <BlueSelect
       v-model="selectedFrame"
@@ -498,8 +584,20 @@ async function onImportFileSelected(event: Event): Promise<void> {
       width="200px"
       :disabled="locked"
       :items="frameItems"
-      info-tooltip="Applied on selection. The frame supplies the simulated physics and only takes effect after the autopilot restarts."
+      info-tooltip="Which physics model the simulator runs. Like the vehicle type, it moves the row to Custom and only takes effect once Apply has restarted the autopilot."
     />
+
+    <div class="flex items-center justify-end gap-2">
+      <v-btn
+        color="primary"
+        size="small"
+        :loading="busy"
+        :disabled="locked || !pendingChange"
+        @click="applySelection"
+      >
+        Apply and restart
+      </v-btn>
+    </div>
 
     <ApplyProgressDialog
       v-model="progressOpen"
