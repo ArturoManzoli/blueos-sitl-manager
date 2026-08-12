@@ -10,7 +10,8 @@
           :class="props.theme === 'dark' ? 'bg-[#ffffff22]' : 'bg-[#00000033]'"
         />
         <span
-          class="mx-3 text-sm font-medium opacity-60"
+          class="mx-3 min-w-0 truncate text-sm font-medium opacity-60"
+          :title="title"
           :class="props.theme === 'dark' ? 'text-white' : 'text-black'"
         >{{ title }}</span>
         <div
@@ -18,17 +19,18 @@
           :class="props.theme === 'dark' ? 'bg-[#ffffff11]' : 'bg-[#00000033]'"
         />
       </div>
-      <v-icon
-        :class="['ml-3 transition-transform', props.theme === 'dark' ? 'text-white' : 'text-black']"
-        class="opacity-40"
-      >
-        {{ isOpen ? 'mdi-menu-up' : 'mdi-menu-down' }}
-      </v-icon>
+      <span
+        class="mdi ml-3 text-[24px] leading-none opacity-40"
+        :class="[
+          isOpen ? 'mdi-menu-up' : 'mdi-menu-down',
+          props.theme === 'dark' ? 'text-white' : 'text-black',
+        ]"
+      />
     </div>
     <transition name="expand">
       <div
         v-show="isOpen"
-        class="px-8 my-6 pb-2"
+        class="px-13 my-6 pb-2"
         :class="props.theme === 'dark' ? 'border-[#555555]' : 'border-[#dddddd]'"
       >
         <slot />

@@ -1,19 +1,25 @@
 <template>
   <div class="flex w-full justify-between items-center">
+    <!-- shrink-0 keeps the label at its natural width: letting flex shrink it by the fraction
+         of a pixel that rounding introduces is enough for Chromium to ellipsize a label that
+         fits. The cap is what makes an outsized label ellipsize instead of eating the row. -->
     <div
       v-if="label"
-      class="min-w-[130px]"
+      class="min-w-0 max-w-[45%] shrink-0"
     >
       <label
-        class="text-start mr-6"
-        :class="theme === 'dark' ? 'text-white' : 'text-black'"
+        class="block truncate text-start mr-6"
+        :title="label"
+        :class="[theme === 'dark' ? 'text-white' : 'text-black', disabled ? 'opacity-30' : '']"
       >{{ label }}</label>
     </div>
-    <div class="flex justify-between items-center">
+    <!-- Shrinks far more eagerly than the label, so a tight row narrows the track first and
+         only ellipsizes the label once the track is down to its floor. -->
+    <div class="flex justify-between items-center min-w-0 shrink-[1000]">
       <div
         name="slider-track"
-        class="relative overflow-visible rounded-[6px] elevation-1"
-        :class="[theme === 'dark' ? 'bg-[#464646AA]' : 'bg-[#00000011]', disabled ? 'opacity-50' : '']"
+        class="relative overflow-visible rounded-[6px] bluevue-elevation-1 min-w-[140px] max-w-full"
+        :class="[theme === 'dark' ? 'bg-[#464646AA]' : 'bg-[#00000011]', disabled ? 'opacity-30' : '']"
         :style="{ width: width || '100%', height: height || '30px', cursor: disabled ? 'not-allowed' : 'pointer' }"
       >
         <div class="absolute inset-x-[18%] top-1/2 -translate-y-1/2 flex justify-between pointer-events-none">
@@ -28,17 +34,17 @@
           />
         </div>
         <div
-          class="absolute translate-y-1/2 bottom-1/2 text-white text-center text-[14px] min-w-[60px] py-[1px] rounded-[6px] elevation-1 z-50 h-3/4"
+          class="absolute translate-y-1/2 bottom-1/2 flex items-center justify-center text-white text-center text-[14px] whitespace-nowrap min-w-[60px] rounded-[6px] bluevue-elevation-1 z-50 h-3/4"
           :class="isEditingCurrentSliderValue ? 'pointer-events-auto' : 'pointer-events-none select-none'"
           :style="{
             left: pillLeft,
             marginLeft: '5px',
-            backgroundColor: color || '#0B5087',
+            backgroundColor: color || 'var(--bluevue-primary)',
           }"
         >
           <div v-if="!isEditingCurrentSliderValue">
             <p
-              class="font-bold select-none"
+              class="font-bold leading-none select-none"
               draggable="false"
             >
               {{ formatDisplay ? formatDisplay(scaledValue) : scaledValue.toFixed(defaultDecimals) }}
@@ -79,13 +85,13 @@
           @dblclick="isEditingCurrentSliderValue = true"
         >
         <p
-          class="absolute left-[4px] top-1/2 -translate-y-1/2 min-w-[30px] text-[12px] font-medium text-center z-10 pointer-events-none"
+          class="absolute left-[5px] top-1/2 -translate-y-1/2 min-w-[30px] text-[12px] font-medium text-center whitespace-nowrap z-10 pointer-events-none"
           :class="theme === 'dark' ? 'text-[#ffffff44]' : 'text-[#00000066]'"
         >
           {{ labelMinDisplay }}
         </p>
         <p
-          class="absolute right-[4px] top-1/2 -translate-y-1/2 min-w-[30px] text-[12px] font-medium text-center z-10 pointer-events-none"
+          class="absolute right-[5px] top-1/2 -translate-y-1/2 min-w-[30px] text-[12px] font-medium text-center whitespace-nowrap z-10 pointer-events-none"
           :class="theme === 'dark' ? 'text-[#ffffff44]' : 'text-[#00000066]'"
         >
           {{ labelMaxDisplay }}

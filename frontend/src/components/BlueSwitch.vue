@@ -1,15 +1,22 @@
 <template>
   <div class="flex w-full justify-between items-center">
-    <div v-if="label">
+    <!-- shrink-0 keeps the label at its natural width: letting flex shrink it by the fraction
+         of a pixel that rounding introduces is enough for Chromium to ellipsize a label that
+         fits. The cap is what makes an outsized label ellipsize instead of eating the row. -->
+    <div
+      v-if="label"
+      class="min-w-0 max-w-[45%] shrink-0"
+    >
       <label
-        class="text-start mr-6"
+        class="block truncate text-start mr-6"
+        :title="label"
         :class="theme === 'dark' ? 'text-white' : 'text-black'"
       >{{ label }}</label>
     </div>
-    <div class="flex items-center">
+    <div class="flex items-center min-w-0 shrink-[1000]">
       <div
         v-if="infoTooltip"
-        class="relative group inline-flex items-center mr-2"
+        class="relative group inline-flex items-center shrink-0 mr-2"
       >
         <span
           class="mdi mdi-information-outline text-[16px] opacity-60 cursor-help"
@@ -23,29 +30,29 @@
       </div>
       <div
         name="switch-track"
-        class="relative rounded-[8px] elevation-1 cursor-pointer overflow-hidden"
-        :class="[theme === 'dark' ? 'bg-[#464646AA]' : 'bg-[#00000011]', disabled ? 'opacity-50 cursor-not-allowed' : '']"
+        class="relative rounded-[8px] bluevue-elevation-1 cursor-pointer overflow-hidden"
+        :class="[theme === 'dark' ? 'bg-[#464646AA]' : 'bg-[#00000011]', disabled ? 'opacity-30 cursor-not-allowed' : '']"
         :style="{ minWidth: width || '75px', height: height || '30px' }"
         @click="toggleSwitch"
       >
         <p
-          class="absolute left-[8px] top-1/2 -translate-y-1/2 text-[11px] pointer-events-none"
+          class="absolute left-[8px] top-1/2 -translate-y-1/2 text-[11px] whitespace-nowrap pointer-events-none"
           :class="theme === 'dark' ? 'text-[#ffffff44]' : 'text-[#00000066]'"
         >
           {{ labelOff || '' }}
         </p>
         <p
-          class="absolute right-[7px] top-1/2 -translate-y-1/2 text-[11px] pointer-events-none"
+          class="absolute right-[7px] top-1/2 -translate-y-1/2 text-[11px] whitespace-nowrap pointer-events-none"
           :class="theme === 'dark' ? 'text-[#ffffff44]' : 'text-[#00000066]'"
         >
           {{ labelOn || '' }}
         </p>
         <div
-          class="absolute top-0 bottom-0 flex items-center justify-center text-[14px] text-white px-2 rounded-[8px] elevation-1 transition-all duration-300 my-[4px]"
+          class="absolute top-0 bottom-0 flex items-center justify-center text-[14px] text-white truncate px-2 rounded-[8px] bluevue-elevation-1 transition-all duration-300 my-[4px]"
           :style="{
             left: modelValue ? 'calc(40% - 2px)' : '2px',
             width: 'calc(60%)',
-            backgroundColor: modelValue ? color || '#0B5087' : '#777777',
+            backgroundColor: modelValue ? color || 'var(--bluevue-primary)' : '#777777',
           }"
         >
           {{ modelValue ? labelOn || 'On' : labelOff || 'Off' }}
