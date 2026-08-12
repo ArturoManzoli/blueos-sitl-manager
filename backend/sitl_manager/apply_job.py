@@ -514,9 +514,11 @@ def start_preset(preset: VehiclePreset) -> ApplyJob:
     return _start(preset.name, preset.vehicle, preset.frame or None, dict(preset.parameters))
 
 
-def start_vehicle(vehicle: Vehicle) -> ApplyJob:
-    return _start(f"{vehicle.value} firmware", vehicle, None, {})
+def start_config(vehicle: Optional[Vehicle], frame: Optional[str]) -> ApplyJob:
+    """Bring about a vehicle type, a SITL frame, or the two together.
 
-
-def start_frame(frame: str) -> ApplyJob:
-    return _start(f"{frame} frame", None, frame, {})
+    One job for both, since a combination chosen by hand usually changes both at once and
+    running them separately would mean two firmware installs and two restarts to reach it.
+    """
+    title = " + ".join(part for part in (vehicle.value if vehicle else None, frame) if part)
+    return _start(title, vehicle, frame, {})

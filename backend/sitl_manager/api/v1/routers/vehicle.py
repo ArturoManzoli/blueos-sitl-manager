@@ -8,14 +8,13 @@ from sitl_manager.api.common import require_sitl, to_http_exception
 from sitl_manager.models import (
     ActivePreset,
     ApplyJob,
-    FrameRequest,
     OperationResult,
     RenamePresetRequest,
     SavePresetRequest,
     Vehicle,
+    VehicleConfigRequest,
     VehiclePreset,
     VehicleStatus,
-    VehicleTypeRequest,
 )
 from sitl_manager.presets import PRESET_EXCLUDED_PREFIXES, all_vehicle_presets
 
@@ -190,18 +189,25 @@ async def skip_apply_job() -> ApplyJob:
     return _start_job(apply_job.skip)
 
 
-@vehicle_router.post("/frame", response_model=ApplyJob, summary="Set the SITL frame and restart.")
+@vehicle_router.post(
+    "/apply",
+    response_model=ApplyJob,
+    summary="Apply a vehicle type and/or SITL frame chosen by hand, and restart.",
+)
 @to_http_exception
-async def set_frame(request: FrameRequest) -> ApplyJob:
-    await require_sitl("the frame only describes a simulated vehicle")
-    return _start_job(lambda: apply_job.start_frame(request.frame))
+async def apply_config(request: VehicleConfigRequest) -> ApplyJob:
+    """Start bringing SITL to a configuration that matches no preset.
 
-
-@vehicle_router.post("/type", response_model=ApplyJob, summary="Switch the SITL vehicle type (installs firmware).")
-@to_http_exception
-async def set_type(request: VehicleTypeRequest) -> ApplyJob:
-    await require_sitl("switching vehicle type would reflash the connected autopilot")
-    return _start_job(lambda: apply_job.start_vehicle(request.vehicle))
+    Both halves travel together because changing them one at a time would install the
+    firmware and restart the autopilot twice over to reach the same place.
+    """
+    await require_sitl("changing the vehicle type or frame would reflash the connected autopilot")
+    if request.vehicle is None and request.frame is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Name a vehicle type, a frame, or both.",
+        )
+    return _start_job(lambda: apply_job.start_config(request.vehicle, request.frame))
 
 
 @vehicle_router.post("/restart", response_model=OperationResult, summary="Restart the autopilot.")
