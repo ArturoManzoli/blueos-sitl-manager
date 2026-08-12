@@ -152,6 +152,10 @@ ENVIRONMENT_PARAM_MAP: Dict[str, str] = {
     "wind_speed": "SIM_WIND_SPD",
     "wind_direction": "SIM_WIND_DIR",
     "wind_turbulence": "SIM_WIND_TURB",
+    "wind_elevation": "SIM_WIND_DIR_Z",
+    "wind_variation": "SIM_WIND_TC",
+    "wind_profile": "SIM_WIND_T",
+    "wind_full_altitude": "SIM_WIND_T_ALT",
     "wave_enable": "SIM_WAVE_ENABLE",
     "wave_amplitude": "SIM_WAVE_AMP",
     "wave_length": "SIM_WAVE_LENGTH",
@@ -162,12 +166,24 @@ ENVIRONMENT_PARAM_MAP: Dict[str, str] = {
     "speedup": "SIM_SPEEDUP",
 }
 
+# ArduPilot defaults SIM_WIND_T to its square law, which scales wind by the height above ground
+# and so leaves none of it at the surface. Every preset therefore pins the profile off: a preset
+# that names a wind should deliver it whatever the vehicle, and a boat or rover never climbs.
+NO_WIND_PROFILE = 1
+
 ENVIRONMENT_PRESETS: List[EnvironmentPreset] = [
     EnvironmentPreset(
         name="Calm pool",
         description="No wind, no waves, no current. A clean baseline for development.",
         environment=Environment(
-            wind_speed=0, wind_turbulence=0, wave_enable=0, wave_amplitude=0, tide_speed=0, speedup=1
+            wind_speed=0,
+            wind_turbulence=0,
+            wind_elevation=0,
+            wind_profile=NO_WIND_PROFILE,
+            wave_enable=0,
+            wave_amplitude=0,
+            tide_speed=0,
+            speedup=1,
         ),
     ),
     EnvironmentPreset(
@@ -177,6 +193,7 @@ ENVIRONMENT_PRESETS: List[EnvironmentPreset] = [
             wind_speed=3,
             wind_direction=180,
             wind_turbulence=0.1,
+            wind_profile=NO_WIND_PROFILE,
             wave_enable=1,
             wave_amplitude=0.2,
             wave_length=8,
@@ -193,6 +210,7 @@ ENVIRONMENT_PRESETS: List[EnvironmentPreset] = [
             wind_speed=8,
             wind_direction=210,
             wind_turbulence=0.3,
+            wind_profile=NO_WIND_PROFILE,
             wave_enable=2,
             wave_amplitude=0.8,
             wave_length=20,
@@ -209,6 +227,7 @@ ENVIRONMENT_PRESETS: List[EnvironmentPreset] = [
             wind_speed=18,
             wind_direction=240,
             wind_turbulence=0.8,
+            wind_profile=NO_WIND_PROFILE,
             wave_enable=2,
             wave_amplitude=2.0,
             wave_length=30,
