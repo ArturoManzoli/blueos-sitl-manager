@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
 import BlueSelect from '@/components/BlueSelect.vue'
 import BlueSlider from '@/components/BlueSlider.vue'
 import { notify, notifyError } from '@/composables/notify'
+import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
 import { EnvironmentApi } from '@/services/api'
-import type { Environment, EnvironmentPreset } from '@/types/sitl'
+import type { AppliedParams, Environment, EnvironmentPreset } from '@/types/sitl'
 
 // Form state keeps every field as a concrete number so it binds cleanly to sliders.
 type EnvironmentForm = { [K in keyof Environment]-?: number }
@@ -15,6 +16,10 @@ const environment = ref<EnvironmentForm>({
   wind_speed: 0,
   wind_direction: 180,
   wind_turbulence: 0,
+  wind_elevation: 0,
+  wind_variation: 5,
+  wind_profile: 1,
+  wind_full_altitude: 60,
   wave_enable: 0,
   wave_amplitude: 0,
   wave_length: 10,
@@ -26,12 +31,111 @@ const environment = ref<EnvironmentForm>({
 })
 const presets = ref<EnvironmentPreset[]>([])
 const busy = ref(false)
+const frame = ref<string | null>(null)
 
 const waveModes = [
   { name: 'Disabled', value: 0 },
   { name: 'Roll & pitch', value: 1 },
   { name: 'Roll, pitch & heave', value: 2 },
 ]
+
+// SIM_WIND_T. The square law scales wind by the square root of the height above ground, so it
+// leaves nothing at all at the surface — which is where boats, rovers and subs live.
+const NO_WIND_PROFILE = 1
+const windProfiles = [
+  { name: 'None', value: NO_WIND_PROFILE },
+  { name: 'Square law', value: 0 },
+  { name: 'Linear', value: 2 },
+]
+
+// What each ArduPilot simulation model does with the ambient parameters, keyed by the prefix of
+// the SITL frames it backs. Frames that match nothing here are aircraft, which fly in the wind
+// and know nothing about water. `surface` marks the models that never gain altitude, and so read
+// no wind at all unless the profile above is switched off.
+interface FrameModel {
+  // Why the model makes nothing of the group, which is also what marks the group unavailable.
+  // Each completes "the <frame> frame ignores <the group> — it …".
+  noWind?: string
+  noWater?: string
+  // The model never gains altitude, and so reads no wind at all unless the profile is off.
+  surface: boolean
+  // Said up front where the wind settings drive something other than air.
+  windIs?: string
+}
+
+const FRAME_MODELS: (FrameModel & { prefix: string })[] = [
+  { prefix: 'sailboat', surface: true },
+  {
+    prefix: 'motorboat',
+    surface: true,
+    noWind: 'carries no sail area, so wind reaches its wind vane and nothing else',
+  },
+  {
+    prefix: 'vectored',
+    surface: true,
+    noWater: 'runs below the surface waves shape',
+    windIs: 'On a sub the wind vector is the water itself: it drags the hull along like a current.',
+  },
+  { prefix: 'rover', surface: true, noWind: 'drives on dry land', noWater: 'drives on dry land' },
+  { prefix: 'balancebot', surface: true, noWind: 'drives on dry land', noWater: 'drives on dry land' },
+]
+const AIRCRAFT: FrameModel = { surface: false, noWater: 'flies nowhere near water' }
+
+const model = computed<FrameModel>(() => {
+  const name = frame.value?.toLowerCase() ?? ''
+  return FRAME_MODELS.find((entry) => name.startsWith(entry.prefix)) ?? AIRCRAFT
+})
+
+// Nothing is adjustable on a real board, where these parameters do not exist. Which of them the
+// simulator would honour is only known once the frame has been read, so until then the panel is
+// permissive rather than a wall of grey.
+const frameKnown = computed(() => isSitl.value && frame.value !== null)
+const windApplies = computed(() => isSitl.value && (!frameKnown.value || !model.value.noWind))
+const waterApplies = computed(() => isSitl.value && (!frameKnown.value || !model.value.noWater))
+const altitudeApplies = computed(() => windApplies.value && environment.value.wind_profile !== NO_WIND_PROFILE)
+
+// A grey slider says what cannot be changed but not why, so each group explains itself: what the
+// running frame ignores outright, the wind it would take but silently scale away, and what the
+// wind stands in for on a vehicle that has no air around it.
+interface Note {
+  text: string
+  warning: boolean
+}
+
+const windNotes = computed<Note[]>(() => {
+  if (!frameKnown.value) {
+    return []
+  }
+  if (model.value.noWind) {
+    return [{ text: `The ${frame.value} frame ignores wind — it ${model.value.noWind}.`, warning: true }]
+  }
+  const notes: Note[] = []
+  if (model.value.surface && environment.value.wind_profile !== NO_WIND_PROFILE) {
+    notes.push({
+      text: `This profile fades the wind to nothing at ground level, and the ${frame.value} frame never leaves it.
+        Set the profile to None for the wind to be felt.`,
+      warning: true,
+    })
+  }
+  if (model.value.windIs) {
+    notes.push({ text: model.value.windIs, warning: false })
+  }
+  return notes
+})
+
+const waterNotes = computed<Note[]>(() => {
+  const because = model.value.noWater
+  if (!frameKnown.value || !because) {
+    return []
+  }
+  return [
+    {
+      text: `The ${frame.value} frame ignores waves and current — it ${because}. Switch to a motorboat or
+        sailboat frame for them to move the vehicle.`,
+      warning: true,
+    },
+  ]
+})
 
 const presetButtons = computed(() =>
   presets.value.map((preset) => ({
@@ -49,10 +153,12 @@ async function loadPresets(): Promise<void> {
   }
 }
 
-// Populate the sliders with the conditions currently set on the vehicle.
+// Populate the sliders with the conditions currently set on the vehicle. The SITL frame comes
+// along because it decides which of them the simulation model can do anything with.
 async function refresh(): Promise<void> {
   try {
-    const current = await EnvironmentApi.get()
+    const [current, status] = await Promise.all([EnvironmentApi.get(), refreshVehicleStatus()])
+    frame.value = status.frame
     for (const key of Object.keys(current) as (keyof Environment)[]) {
       const value = current[key]
       if (value != null) {
@@ -64,13 +170,28 @@ async function refresh(): Promise<void> {
   }
 }
 
-defineExpose({ refresh })
+// Every value is read back after being written, so a name missing from `applied` is one the
+// simulator is not running, which is worth saying rather than reporting a clean success.
+function reportApplied(result: AppliedParams, what: string): void {
+  if (result.unverified.length) {
+    notify(`${what}, but ${result.unverified.join(', ')} did not take. Try again.`, 'warning')
+    return
+  }
+  notify(`${what}.`, 'success')
+}
+
+// Driven by the view, which keeps the loading overlay up until every panel has its data.
+async function reload(): Promise<void> {
+  await Promise.all([loadPresets(), refresh()])
+}
+
+defineExpose({ reload })
 
 async function apply(): Promise<void> {
   busy.value = true
   try {
     const result = await EnvironmentApi.set(environment.value)
-    notify(`Applied ${result.applied.length} parameter(s).`, 'success')
+    reportApplied(result, `Applied ${result.applied.length} parameter(s)`)
   } catch (error) {
     notifyError(error, 'Could not apply environment')
   } finally {
@@ -87,8 +208,7 @@ async function applyPreset(preset: EnvironmentPreset): Promise<void> {
         environment.value[key] = value
       }
     }
-    await EnvironmentApi.applyPreset(preset.name)
-    notify(`Applied preset "${preset.name}".`, 'success')
+    reportApplied(await EnvironmentApi.applyPreset(preset.name), `Applied preset "${preset.name}"`)
   } catch (error) {
     notifyError(error, 'Could not apply preset')
   } finally {
@@ -99,12 +219,14 @@ async function applyPreset(preset: EnvironmentPreset): Promise<void> {
 const metersPerSecond = (value: number): string => `${value.toFixed(1)} m/s`
 const degrees = (value: number): string => `${value.toFixed(0)}°`
 const meters = (value: number): string => `${value.toFixed(1)} m`
+const seconds = (value: number): string => `${value.toFixed(1)} s`
 const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
 
-onMounted(() => {
-  loadPresets()
-  refresh()
-})
+const NOTE_BASE_CLASSES = 'flex items-center gap-2 rounded-[6px] border text-xs px-3 py-2'
+const noteClasses = (note: Note): string =>
+  note.warning
+    ? `${NOTE_BASE_CLASSES} bg-[#FB8C0022] border-[#FB8C0055] text-[#FFB74D]`
+    : `${NOTE_BASE_CLASSES} bg-[#4FC3F71A] border-[#4FC3F744] text-[#81D4FA]`
 </script>
 
 <template>
@@ -114,88 +236,13 @@ onMounted(() => {
       label="Presets"
       theme="dark"
       type="switch"
+      density="regular"
+      :disabled="busy || !isSitl"
       :button-items="presetButtons"
     />
 
     <div>
-      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3">
-        Wind
-      </div>
-      <div class="flex flex-col gap-3">
-        <BlueSlider
-          v-model="environment.wind_speed"
-          name="wind-speed"
-          label="Speed"
-          theme="dark"
-          width="380px"
-          :min="0"
-          :max="30"
-          :step="0.5"
-          :format-display="metersPerSecond"
-        />
-        <BlueSlider
-          v-model="environment.wind_direction"
-          name="wind-direction"
-          label="Direction"
-          theme="dark"
-          width="380px"
-          :min="0"
-          :max="360"
-          :step="1"
-          :format-display="degrees"
-        />
-        <BlueSlider
-          v-model="environment.wind_turbulence"
-          name="wind-turbulence"
-          label="Turbulence"
-          theme="dark"
-          width="380px"
-          :min="0"
-          :max="1"
-          :step="0.05"
-        />
-      </div>
-    </div>
-
-    <div>
-      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3">
-        Waves &amp; current
-      </div>
-      <div class="flex flex-col gap-3">
-        <BlueSelect
-          v-model="environment.wave_enable"
-          label="Wave mode"
-          theme="dark"
-          width="200px"
-          :items="waveModes"
-        />
-        <BlueSlider
-          v-model="environment.wave_amplitude"
-          name="wave-amplitude"
-          label="Wave amplitude"
-          theme="dark"
-          width="380px"
-          :min="0"
-          :max="3"
-          :step="0.1"
-          :format-display="meters"
-        />
-        <BlueSlider
-          v-model="environment.tide_speed"
-          name="current-speed"
-          label="Current speed"
-          theme="dark"
-          width="380px"
-          :min="0"
-          :max="3"
-          :step="0.1"
-          :format-display="metersPerSecond"
-        />
-      </div>
-    </div>
-
-    <div>
-      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3">
+      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
         Simulation
       </div>
       <BlueSlider
@@ -207,8 +254,170 @@ onMounted(() => {
         :min="0.1"
         :max="10"
         :step="0.1"
+        :disabled="!isSitl"
         :format-display="speedupLabel"
       />
+    </div>
+
+    <div>
+      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
+        Wind
+      </div>
+      <div class="flex flex-col gap-3">
+        <div
+          v-for="note in windNotes"
+          :key="note.text"
+          :class="noteClasses(note)"
+        >
+          <v-icon size="16">
+            {{ note.warning ? 'mdi-alert' : 'mdi-information-outline' }}
+          </v-icon>
+          {{ note.text }}
+        </div>
+        <BlueSlider
+          v-model="environment.wind_speed"
+          name="wind-speed"
+          label="Speed"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="30"
+          :step="0.5"
+          :disabled="!windApplies"
+          :format-display="metersPerSecond"
+        />
+        <BlueSlider
+          v-model="environment.wind_direction"
+          name="wind-direction"
+          label="Direction"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="360"
+          :step="1"
+          :disabled="!windApplies"
+          :format-display="degrees"
+        />
+        <BlueSlider
+          v-model="environment.wind_elevation"
+          name="wind-elevation"
+          label="Vertical angle"
+          theme="dark"
+          width="380px"
+          :min="-90"
+          :max="90"
+          :step="1"
+          :disabled="!windApplies"
+          :format-display="degrees"
+        />
+        <BlueSlider
+          v-model="environment.wind_turbulence"
+          name="wind-turbulence"
+          label="Turbulence"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="1"
+          :step="0.05"
+          :disabled="!windApplies"
+        />
+        <BlueSlider
+          v-model="environment.wind_variation"
+          name="wind-variation"
+          label="Variation time"
+          theme="dark"
+          width="380px"
+          :min="0.1"
+          :max="60"
+          :step="0.1"
+          :disabled="!windApplies"
+          :format-display="seconds"
+        />
+        <BlueSelect
+          v-model="environment.wind_profile"
+          label="Altitude profile"
+          theme="dark"
+          width="200px"
+          :items="windProfiles"
+          :disabled="!windApplies"
+          info-tooltip="How the wind above builds with height. None blows at full speed from the ground up; square law and linear taper it off towards the surface, which is where a boat, rover or sub would end up with no wind at all."
+        />
+        <BlueSlider
+          v-model="environment.wind_full_altitude"
+          name="wind-full-altitude"
+          label="Full-speed altitude"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="300"
+          :step="5"
+          :disabled="!altitudeApplies"
+          :format-display="meters"
+        />
+      </div>
+    </div>
+
+    <div>
+      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
+        Waves &amp; current
+      </div>
+      <div class="flex flex-col gap-3">
+        <div
+          v-for="note in waterNotes"
+          :key="note.text"
+          :class="noteClasses(note)"
+        >
+          <v-icon size="16">
+            mdi-alert
+          </v-icon>
+          {{ note.text }}
+        </div>
+        <BlueSelect
+          v-model="environment.wave_enable"
+          label="Wave mode"
+          theme="dark"
+          width="200px"
+          :items="waveModes"
+          :disabled="!waterApplies"
+          info-tooltip="Waves and current only move the vehicle while it is armed — ArduPilot keeps the water still until then so the gyros can initialise — and only on a boat frame (motorboat or sailboat), the one simulation model that has water in it."
+        />
+        <BlueSlider
+          v-model="environment.wave_amplitude"
+          name="wave-amplitude"
+          label="Wave amplitude"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="3"
+          :step="0.1"
+          :disabled="!waterApplies"
+          :format-display="meters"
+        />
+        <BlueSlider
+          v-model="environment.tide_speed"
+          name="current-speed"
+          label="Current speed"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="3"
+          :step="0.1"
+          :disabled="!waterApplies"
+          :format-display="metersPerSecond"
+        />
+        <BlueSlider
+          v-model="environment.tide_direction"
+          name="current-direction"
+          label="Current direction"
+          theme="dark"
+          width="380px"
+          :min="0"
+          :max="360"
+          :step="1"
+          :disabled="!waterApplies"
+          :format-display="degrees"
+        />
+      </div>
     </div>
 
     <div class="flex justify-end">
@@ -216,6 +425,7 @@ onMounted(() => {
         size="small"
         color="primary"
         :loading="busy"
+        :disabled="!isSitl"
         @click="apply"
       >
         Apply conditions
