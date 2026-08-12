@@ -15,6 +15,9 @@ import type { LocationPreset, SitlLocation } from '@/types/sitl'
 const emit = defineEmits<{ (event: 'changed'): void }>()
 
 const location = ref<SitlLocation>({ latitude: -27.563, longitude: -48.459, altitude: 0, heading: 270 })
+// Where the vehicle was last read to spawn, which is what the form is measured against to
+// decide whether there is anything left to write.
+const applied = ref<SitlLocation | null>(null)
 const presets = ref<LocationPreset[]>([])
 const busy = ref(false)
 
@@ -126,10 +129,17 @@ async function loadPresets(): Promise<void> {
 async function refresh(): Promise<void> {
   try {
     location.value = await LocationApi.get()
+    applied.value = { ...location.value }
   } catch (error) {
     notifyError(error, 'Could not read the spawn location')
   }
 }
+
+// Every field counts, not just the coordinates: a heading is as much a change as a move.
+const pendingChange = computed(() => {
+  const current = applied.value
+  return current === null || (Object.keys(current) as (keyof SitlLocation)[]).some((key) => current[key] !== location.value[key])
+})
 
 // Driven by the view, which keeps the loading overlay up until every panel has its data.
 async function reload(): Promise<void> {
@@ -390,7 +400,7 @@ async function applyLocation(): Promise<void> {
         color="primary"
         size="small"
         :loading="busy"
-        :disabled="!isSitl"
+        :disabled="!isSitl || !pendingChange"
         @click="applyLocation"
       >
         Apply and restart
