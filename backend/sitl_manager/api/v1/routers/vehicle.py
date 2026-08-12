@@ -115,19 +115,16 @@ vehicle_router = APIRouter(
     responses={status.HTTP_404_NOT_FOUND: {"description": "Not found"}},
 )
 
-# SITL frames most relevant to marine BlueOS development. The full list lives in
-# ArduPilot Manager's SITLFrame enum; these are the ones worth surfacing by default.
-SITL_FRAMES: List[str] = [
-    "vectored",
-    "vectored_6dof",
-    "motorboat",
-    "motorboat-skid",
-    "sailboat",
-    "rover",
-    "rover-skid",
-    "quad",
-    "plane",
-]
+# SITL frames most relevant to marine BlueOS development, grouped by the firmware that can
+# run them. The full list lives in ArduPilot Manager's SITLFrame enum; these are the ones
+# worth surfacing by default. Each frame is a physics model built into one vehicle's binary,
+# so the grouping is not a matter of taste: ArduSub has no idea what a plane is.
+SITL_FRAMES: Dict[Vehicle, List[str]] = {
+    Vehicle.SUB: ["vectored", "vectored_6dof"],
+    Vehicle.ROVER: ["motorboat", "motorboat-skid", "sailboat", "rover", "rover-skid"],
+    Vehicle.COPTER: ["quad"],
+    Vehicle.PLANE: ["plane"],
+}
 
 
 @vehicle_router.get("/status", response_model=VehicleStatus, summary="Current board, frame and vehicle type.")
@@ -144,9 +141,13 @@ async def status_() -> VehicleStatus:
     )
 
 
-@vehicle_router.get("/frames", response_model=List[str], summary="List selectable SITL frames.")
+@vehicle_router.get(
+    "/frames",
+    response_model=Dict[Vehicle, List[str]],
+    summary="List the selectable SITL frames of each vehicle type.",
+)
 @to_http_exception
-async def frames() -> List[str]:
+async def frames() -> Dict[Vehicle, List[str]]:
     return SITL_FRAMES
 
 

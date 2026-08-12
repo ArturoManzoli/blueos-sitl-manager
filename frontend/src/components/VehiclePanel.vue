@@ -25,7 +25,7 @@ interface PresetButton {
 }
 
 const vehicleTypes: VehicleType[] = ['Sub', 'Rover', 'Plane', 'Copter']
-const frames = ref<string[]>([])
+const frames = ref<Partial<Record<VehicleType, string[]>>>({})
 const presets = ref<VehiclePreset[]>([])
 const busy = ref(false)
 // Set while the fields are written from the vehicle or from a preset, so the watchers below
@@ -66,10 +66,14 @@ const contextMenuOpen = ref(false)
 const renameDialogOpen = ref(false)
 
 const vehicleItems = computed(() => vehicleTypes.map((value) => ({ name: value, value })))
-// Keep the running frame selectable even when it is not one of the curated SITL frames,
-// so the dropdown can show what the vehicle is actually configured with.
+// Only the frames the chosen firmware can run: each is a physics model compiled into one
+// vehicle's binary, so offering a plane to a sub would only be offering a failure.
+const vehicleFrames = computed(() => frames.value[selectedVehicle.value] ?? [])
+// The running frame stays selectable even when it is not one of the curated ones — or not
+// one of this vehicle's at all, which is what a vehicle configured elsewhere looks like — so
+// the dropdown can show what the vehicle is actually set to.
 const frameItems = computed(() => {
-  const names = [...frames.value]
+  const names = [...vehicleFrames.value]
   if (selectedFrame.value && !names.includes(selectedFrame.value)) {
     names.unshift(selectedFrame.value)
   }
@@ -379,6 +383,17 @@ async function selectPreset(preset: VehiclePreset): Promise<void> {
   await nextTick()
   syncing.value = false
 }
+
+// Changing the vehicle type takes the frame with it when the one on screen belongs to the
+// firmware being left behind. Left alone, the field would keep offering to run a sub on a
+// plane. A frame the vehicle is genuinely running is left where it is, which is why this
+// only answers to a choice the user made.
+watch(selectedVehicle, () => {
+  const allowed = vehicleFrames.value
+  if (!syncing.value && allowed.length && !allowed.includes(selectedFrame.value ?? '')) {
+    selectedFrame.value = allowed[0]
+  }
+})
 
 // A combination the user assembles belongs to nobody's preset, so the row says so. Custom is
 // deliberately free-form: any pairing of vehicle type and frame can be tried from it, and
