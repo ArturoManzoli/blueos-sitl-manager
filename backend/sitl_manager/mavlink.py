@@ -1,7 +1,7 @@
 import asyncio
 import json
 import math
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 import aiohttp
 from loguru import logger
@@ -61,17 +61,134 @@ async def set_param(
     )
 
 
+def values_match(readback: float, target: float) -> bool:
+    """Whether a parameter read back counts as holding the value that was written.
+
+    Parameters travel as float32 and several are stored as integers, so an exact
+    comparison would call a correct write a failure.
+    """
+    return abs(readback - target) <= max(1e-3, abs(target) * 1e-3)
+
+
+# A parameter write is echoed by the autopilot, so the read-back that confirms it normally
+# lands on the first poll; these only have to cover a busy simulator.
+VERIFY_TIMEOUT = 0.6
+VERIFY_POLL = 0.05
+SEND_DELAY = 0.02
+
+# mavlink2rest keeps one PARAM_VALUE per vehicle, so any other client reading parameters —
+# Cockpit opening its parameter editor, BlueOS refreshing — overwrites the slot our read-back
+# is watching, and the answer we are waiting for is gone. Losing that race is what made a
+# spawn location that had been written correctly report itself as unwritten, so the reads that
+# have to be right wait several times longer than a quiet link needs.
+NAMED_SET_VERIFY_TIMEOUT = 3.0
+
+
+async def set_param_verified(
+    name: str,
+    value: float,
+    system_id: int = DEFAULT_SYSTEM_ID,
+    attempts: int = 1,
+    timeout: float = VERIFY_TIMEOUT,
+    poll_interval: float = VERIFY_POLL,
+    retry_on_silence: bool = False,
+) -> Optional[float]:
+    """Write a parameter and read it back, returning what the autopilot reports.
+
+    A PARAM_SET is unacknowledged, so a dropped write is silent: the autopilot simply keeps
+    the old value, and reading back is the only way to find out. An answer that still shows
+    the old value is exactly that signal, so it is worth writing again.
+
+    What silence means depends on the caller. Writing a preset's hundreds of parameters, it
+    means this firmware does not have the name, which no amount of asking will change — the
+    asymmetry that keeps retries from costing anything on the usual unsupported handful. For
+    a name known to exist, it means the answer went missing, which is worth another go, and
+    ``retry_on_silence`` says which of the two the caller is dealing with.
+    """
+    readback: Optional[float] = None
+    for attempt in range(1, attempts + 1):
+        # Counted before the write so the autopilot's own echo of it can settle the
+        # read-back, while a value cached from before the write still cannot.
+        since = await param_value_count(system_id)
+        await set_param(name, value, system_id)
+        await asyncio.sleep(SEND_DELAY)
+        readback = await get_param(name, system_id, timeout, poll_interval, since=since)
+        if readback is not None and values_match(readback, value):
+            return readback
+        if readback is None and not retry_on_silence:
+            return None
+        if attempt < attempts:
+            logger.warning(f"{name} reads {readback} after writing {value}; writing again")
+    return readback
+
+
+async def read_message(name: str, system_id: int = DEFAULT_SYSTEM_ID) -> Optional[Dict[str, Any]]:
+    """The last message of a type mavlink2rest saw, wrapped in the status envelope it adds."""
+    session = get_session()
+    url = f"{MAVLINK2REST_URL}/mavlink/vehicles/{system_id}/components/{AUTOPILOT_COMPONENT_ID}/messages/{name}"
+    try:
+        async with session.get(url) as response:
+            if response.status != 200:
+                return None
+            body: Optional[Dict[str, Any]] = await response.json()
+            return body if isinstance(body, dict) else None
+    except Exception as error:  # noqa: BLE001 - best-effort read, callers keep polling
+        logger.debug(f"{name} read failed: {error}")
+        return None
+
+
+def _message_counter(body: Optional[Dict[str, Any]]) -> Optional[int]:
+    """How many of this message type mavlink2rest has seen, from its status envelope."""
+    counter = ((body or {}).get("status") or {}).get("time", {}).get("counter")
+    return int(counter) if isinstance(counter, (int, float)) else None
+
+
+async def _await_param_value(
+    match: Callable[[Dict[str, Any]], bool],
+    system_id: int,
+    timeout: float,
+    poll_interval: float,
+    since: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    """Poll the cached PARAM_VALUE for an answer satisfying ``match``.
+
+    mavlink2rest retains only the most recent PARAM_VALUE, so a read is a request followed by
+    watching that one slot. ``since`` is the message count taken before the request was sent:
+    the answer has to be newer than that, otherwise the value sitting in the slot from an
+    earlier read would be taken for a reply to this one.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        body = await read_message("PARAM_VALUE", system_id)
+        counter = _message_counter(body)
+        fresh = since is None or counter is None or counter > since
+        message: Dict[str, Any] = (body or {}).get("message") or {}
+        if fresh and message and match(message):
+            return message
+        await asyncio.sleep(poll_interval)
+    return None
+
+
+async def param_value_count(system_id: int = DEFAULT_SYSTEM_ID) -> Optional[int]:
+    """How many PARAM_VALUEs mavlink2rest has seen, for callers that read back a write."""
+    return _message_counter(await read_message("PARAM_VALUE", system_id))
+
+
 async def get_param(
     name: str,
     system_id: int = DEFAULT_SYSTEM_ID,
     timeout: float = 3.0,
     poll_interval: float = 0.2,
+    since: Optional[int] = None,
 ) -> Optional[float]:
-    """Request a single parameter and poll the cached PARAM_VALUE until it matches.
+    """Read one parameter by name, or None when the autopilot does not answer for it.
 
-    mavlink2rest only retains the most recent PARAM_VALUE, so we trigger a fresh read
-    and wait for the autopilot to answer with the parameter we asked for.
+    ``since`` is a PARAM_VALUE count from before the caller did something the autopilot
+    answers unprompted — a write, which it echoes — so that the echo counts as the answer
+    instead of being dismissed as stale. It defaults to the count at the time of the request.
     """
+    if since is None:
+        since = await param_value_count(system_id)
     await send_message(
         {
             "type": "PARAM_REQUEST_READ",
@@ -82,106 +199,125 @@ async def get_param(
         }
     )
 
-    session = get_session()
-    url = f"{MAVLINK2REST_URL}/mavlink/vehicles/{system_id}/components/{AUTOPILOT_COMPONENT_ID}/messages/PARAM_VALUE"
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    body = await response.json()
-                    message = body.get("message", {})
-                    if _decode_param_id(message.get("param_id", "")) == name:
-                        return float(message.get("param_value"))
-        except Exception as error:  # noqa: BLE001 - best-effort read, keep polling
-            logger.debug(f"PARAM_VALUE poll for {name} failed: {error}")
-        await asyncio.sleep(poll_interval)
+    message = await _await_param_value(
+        lambda answer: _decode_param_id(answer.get("param_id", "")) == name,
+        system_id,
+        timeout,
+        poll_interval,
+        since,
+    )
+    if message is None:
+        logger.warning(f"Timed out reading parameter {name}")
+        return None
+    value = message.get("param_value")
+    return float(value) if isinstance(value, (int, float)) else None
 
-    logger.warning(f"Timed out reading parameter {name}")
-    return None
+
+async def get_param_by_index(
+    index: int,
+    system_id: int = DEFAULT_SYSTEM_ID,
+    timeout: float = 3.0,
+    poll_interval: float = 0.2,
+) -> Optional[str]:
+    """Read a parameter by its position in the table, returning the name that answered.
+
+    A PARAM_REQUEST_READ with a param_index of 0 or more selects by index and ignores the
+    name, which is the only way to ask a question every ArduPilot version answers the same.
+    """
+    since = _message_counter(await read_message("PARAM_VALUE", system_id))
+    await send_message(
+        {
+            "type": "PARAM_REQUEST_READ",
+            "param_id": _encode_param_id(""),
+            "param_index": index,
+            "target_system": system_id,
+            "target_component": 0,
+        }
+    )
+
+    message = await _await_param_value(
+        lambda answer: answer.get("param_index") == index,
+        system_id,
+        timeout,
+        poll_interval,
+        since,
+    )
+    return _decode_param_id(message.get("param_id", "")) if message else None
+
+
+async def heartbeat_count(system_id: int = DEFAULT_SYSTEM_ID) -> Optional[int]:
+    """How many HEARTBEATs mavlink2rest has seen, or None if it has never seen one."""
+    return _message_counter(await read_message("HEARTBEAT", system_id))
+
+
+# Which parameter the readiness probe asks for, by position rather than by name. Names are
+# not stable across ArduPilot releases — 4.6 renamed SYSID_THISMAV to MAV_SYSID — and a name
+# the running firmware does not know is simply never answered, which looks exactly like an
+# autopilot that never came back.
+READY_PROBE_INDEX = 0
+READY_PROBE_TIMEOUT = 3.0
 
 
 async def wait_until_ready(
     system_id: int = DEFAULT_SYSTEM_ID,
     timeout: float = 120.0,
-    poll_interval: float = 2.0,
-    probe_param: str = "SYSID_THISMAV",
+    poll_interval: float = 1.0,
+    on_wait: Optional[Callable[[float, str], None]] = None,
 ) -> bool:
-    """Block until the autopilot answers a parameter read, i.e. it has finished booting.
+    """Block until the autopilot is heartbeating again and serving parameter reads.
 
-    Used after a restart so we only push the preset parameters once SITL is back up and
-    its parameter system is serving requests.
+    Both halves matter after a restart: the heartbeat says the process is back, and a
+    parameter read says the part we are about to use is up. Liveness is taken from the
+    heartbeat count moving rather than from the message being there, because mavlink2rest
+    keeps serving the last heartbeat it saw long after the vehicle went away.
+
+    ``on_wait`` is called with the seconds spent so far and what is still missing, so a caller
+    driving a progress dialog can show that a restart is in flight rather than hung.
     """
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        if await get_param(probe_param, system_id, timeout=2.0) is not None:
+    loop = asyncio.get_event_loop()
+    started = loop.time()
+    before = await heartbeat_count(system_id)
+
+    while loop.time() - started < timeout:
+        count = await heartbeat_count(system_id)
+        beating = count is not None and (before is None or count > before)
+        if beating and await get_param_by_index(READY_PROBE_INDEX, system_id, READY_PROBE_TIMEOUT) is not None:
             return True
+        if on_wait is not None:
+            on_wait(loop.time() - started, "no heartbeat yet" if not beating else "waiting for parameters")
         await asyncio.sleep(poll_interval)
+
     logger.warning("Timed out waiting for the autopilot to become ready")
     return False
 
 
-class BulkParamResult(NamedTuple):
-    applied: List[str]
-    failed: List[str]
-    unverified: List[str]
-    aborted: bool
-
-
-async def set_params_bulk(
+async def set_params_verified(
     params: Dict[str, float],
     system_id: int = DEFAULT_SYSTEM_ID,
-    send_delay: float = 0.02,
-    settle_delay: float = 1.0,
-    verify_timeout: float = 0.25,
-    verify_poll: float = 0.05,
-    max_consecutive_timeouts: int = 3,
-) -> BulkParamResult:
-    """Apply many parameters quickly and report which stuck.
+    attempts: int = 1,
+    timeout: float = NAMED_SET_VERIFY_TIMEOUT,
+) -> Tuple[List[str], List[str]]:
+    """Write a handful of parameters, confirming each one. Returns (applied, unverified).
 
-    Fires every PARAM_SET first, then reads each back once with a near-instant timeout.
-    Verifying a full parameter file one read at a time is slow, and a handful of params
-    this firmware ignores never answer a read at all. To avoid blocking the UI on those,
-    we abort the read-back pass as soon as ``max_consecutive_timeouts`` parameters in a
-    row fail to answer: every parameter was already sent, so the caller can finish in the
-    background. ``aborted`` says whether we bailed; ``unverified`` lists the params left.
+    For the small named sets — the spawn location, the ambient conditions — where every value
+    matters, every name is one a SITL build has, and there are few enough that reading each
+    one back properly costs nothing. This is deliberately not how the preset's hundreds of
+    parameters are written: those go one at a time through the job engine, which has a
+    progress dialog to report each on and expects some names to be missing.
     """
-    for name, value in params.items():
-        await set_param(name, float(value), system_id)
-        if send_delay:
-            await asyncio.sleep(send_delay)
-
-    # Let the burst of writes settle before reading anything back.
-    await asyncio.sleep(settle_delay)
-
     applied: List[str] = []
-    failed: List[str] = []
-    items = list(params.items())
-    consecutive_timeouts = 0
-    for index, (name, value) in enumerate(items):
+    unverified: List[str] = []
+    for name, value in params.items():
         target = float(value)
-        readback = await get_param(name, system_id, timeout=verify_timeout, poll_interval=verify_poll)
-        if readback is None:
-            failed.append(name)
-            logger.warning(f"Could not verify {name}={target} (no response)")
-            consecutive_timeouts += 1
-            if consecutive_timeouts >= max_consecutive_timeouts:
-                unverified = [item_name for item_name, _ in items[index + 1 :]]
-                logger.warning(
-                    f"Aborting read-back after {consecutive_timeouts} consecutive timeouts; "
-                    f"{len(unverified)} parameter(s) left to settle in the background."
-                )
-                return BulkParamResult(applied, failed, unverified, aborted=True)
-            continue
-
-        consecutive_timeouts = 0
-        tolerance = max(1e-3, abs(target) * 1e-3)
-        if abs(readback - target) <= tolerance:
+        readback = await set_param_verified(
+            name, target, system_id, attempts=attempts, timeout=timeout, retry_on_silence=True
+        )
+        if readback is not None and values_match(readback, target):
             applied.append(name)
         else:
-            failed.append(name)
-            logger.warning(f"Could not verify {name}={target} (read {readback})")
-    return BulkParamResult(applied, failed, [], aborted=False)
+            logger.warning(f"{name} did not take {target} (read back {readback})")
+            unverified.append(name)
+    return applied, unverified
 
 
 def _decode_flight_sw_version(encoded: int) -> Optional[str]:
