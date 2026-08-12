@@ -1,11 +1,12 @@
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, TypeVar
 
 from sitl_manager.models import (
     Environment,
     EnvironmentPreset,
     Location,
     LocationPreset,
+    NamedPreset,
     Vehicle,
     VehiclePreset,
 )
@@ -239,9 +240,18 @@ LOCATION_PRESETS: List[LocationPreset] = [
             heading=DEFAULT_HOME_HEADING,
         ),
     ),
-    LocationPreset(name="San Francisco Bay", location=Location(latitude=37.8199, longitude=-122.4783, heading=0)),
-    LocationPreset(name="Sydney Harbour", location=Location(latitude=-33.8523, longitude=151.2108, heading=0)),
-    LocationPreset(name="Equator origin", location=Location(latitude=0.0, longitude=0.0, heading=0)),
+    LocationPreset(
+        name="AltaSea (Port of Los Angeles)",
+        location=Location(latitude=33.719589, longitude=-118.273179, heading=0),
+    ),
+    LocationPreset(
+        name="Kawaihae (Hawaii)",
+        location=Location(latitude=20.027301, longitude=-155.830262, heading=0),
+    ),
+    LocationPreset(
+        name="Zandvoort (Netherlands)",
+        location=Location(latitude=52.391492, longitude=4.523203, heading=0),
+    ),
 ]
 
 # The Blue Robotics presets are composed from the parameter layers Blue Robotics ships in
@@ -332,20 +342,40 @@ def is_builtin_preset_name(name: str) -> bool:
     return any(preset.name == name for preset in VEHICLE_PRESETS)
 
 
-def all_vehicle_presets() -> List[VehiclePreset]:
-    """Built-in presets followed by user-saved/imported ones.
+PresetT = TypeVar("PresetT", bound=NamedPreset)
 
-    Each preset is tagged with ``builtin`` so the UI knows which ones can be deleted.
-    Custom presets that reuse a built-in name are ignored so the curated definitions
-    always win; importing under a built-in name is rejected at the API layer.
+
+def _merge_presets(builtin: List[PresetT], saved: List[PresetT]) -> List[PresetT]:
+    """Built-ins first, in their curated order, then the ones the user added.
+
+    A saved preset named after a built-in takes its place and keeps its slot in the row,
+    tagged ``overridden`` so the UI offers to revert it rather than to delete it. Everything
+    else the user saved follows, tagged as not built-in and so freely deletable.
     """
-    # Imported lazily to avoid a circular import: custom_presets reads the models only.
-    from sitl_manager.custom_presets import list_custom_presets
-
-    builtin = [preset.copy(update={"builtin": True}) for preset in VEHICLE_PRESETS]
-    custom = [
-        preset.copy(update={"builtin": False})
-        for preset in list_custom_presets()
-        if not is_builtin_preset_name(preset.name)
+    edits = {preset.name: preset for preset in saved}
+    merged = [
+        edits.get(preset.name, preset).copy(update={"builtin": True, "overridden": preset.name in edits})
+        for preset in builtin
     ]
-    return [*builtin, *custom]
+    builtin_names = {preset.name for preset in builtin}
+    merged.extend(
+        preset.copy(update={"builtin": False, "overridden": False})
+        for preset in saved
+        if preset.name not in builtin_names
+    )
+    return merged
+
+
+def all_vehicle_presets() -> List[VehiclePreset]:
+    """Built-in vehicle presets, any edits to them applied, then the user's own."""
+    # Imported lazily to avoid a circular import: custom_presets reads the models only.
+    from sitl_manager.custom_presets import VEHICLE_STORE
+
+    return _merge_presets(VEHICLE_PRESETS, VEHICLE_STORE.list())
+
+
+def all_location_presets() -> List[LocationPreset]:
+    """Built-in spawn locations, any edits to them applied, then the user's own."""
+    from sitl_manager.custom_presets import LOCATION_STORE
+
+    return _merge_presets(LOCATION_PRESETS, LOCATION_STORE.list())

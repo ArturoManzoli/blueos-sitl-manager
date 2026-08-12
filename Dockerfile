@@ -29,6 +29,7 @@ EXPOSE 80
 
 # User-saved and imported presets live here, bind-mounted below so they survive updates.
 ENV SITL_CUSTOM_PRESETS_DIR=/app/persistent/custom_presets
+ENV SITL_CUSTOM_LOCATIONS_DIR=/app/persistent/custom_locations
 
 LABEL version="0.1.0"
 
