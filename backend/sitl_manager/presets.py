@@ -27,6 +27,10 @@ PRESET_EXCLUDED_PREFIXES: Tuple[str, ...] = ("SIM_",)
 # Per-board calibration and identity values, which describe the machine a parameter dump
 # was taken from rather than the vehicle it configures. Copied verbatim from the vendor
 # repository so presets stay in step with what Blue Robotics refuses to transfer.
+#
+# Applied to vehicle layers only. A SITL layer lists the same accelerometer and compass
+# offsets on purpose, as placeholder values that let the simulated vehicle pass the prearm
+# 3D-accel check, so filtering them there leaves the vehicle permanently unarmable.
 BLACKLIST: Tuple[str, ...] = tuple(
     line.strip() for line in (VENDOR_DIR / "blacklist.txt").read_text().splitlines() if line.strip()
 )
@@ -66,18 +70,43 @@ HARDWARE_PREFIXES: Tuple[str, ...] = (
 )
 HARDWARE_SUFFIXES: Tuple[str, ...] = ("_REVERSED", "_TRIM")
 
+# How the vehicle drives: control gains, navigation speeds and turn geometry. A vehicle
+# layer that states one of these keeps it, because a SITL overlay carries ArduPilot's
+# tuning for its own generic test vehicle and the two sets are only coherent as a whole.
+# Half of each produces a hull that cannot turn tightly enough to fly a mission: a
+# BlueBoat given the generic rover's WP_SPEED of 5 m/s while keeping its own
+# ATC_TURN_MAX_G of 0.1 g is held to 11 deg/s, a turn radius of about 25 m, so it orbits
+# every waypoint instead of reaching it.
+DYNAMICS_PARAMS: Tuple[str, ...] = (
+    "CRUISE_SPEED",
+    "CRUISE_THROTTLE",
+    "LOIT_RADIUS",
+    "RTL_SPEED",
+    "SPEED_MAX",
+    "TURN_RADIUS",
+)
+DYNAMICS_PREFIXES: Tuple[str, ...] = ("ACRO_", "ATC_", "MOT_", "WP_")
+
 
 def _is_hardware_param(name: str) -> bool:
     return name in HARDWARE_PARAMS or name.startswith(HARDWARE_PREFIXES) or name.endswith(HARDWARE_SUFFIXES)
 
 
-def load_params(path: Path, drop_hardware: bool = True) -> Dict[str, float]:
+def _is_dynamics_param(name: str) -> bool:
+    return name in DYNAMICS_PARAMS or name.startswith(DYNAMICS_PREFIXES)
+
+
+def load_params(path: Path, vehicle_layer: bool = True) -> Dict[str, float]:
     """Parse an ArduPilot parameter file into a name->value map.
 
     Accepts the shapes the vendor repository uses: ``NAME VALUE``, ``NAME: VALUE,`` and
     ``NAME, VALUE``, with ``#`` or ``//`` comments. ``%include`` directives are ignored
     because callers compose the layers explicitly, which is what makes the precedence
     between a vehicle and its SITL overlay reviewable.
+
+    A vehicle layer is a dump from a real board, so the blacklisted calibration and the
+    hardware settings in it are dropped. A SITL layer is a statement of what the simulator
+    needs and is taken as written.
     """
     params: Dict[str, float] = {}
     for raw_line in path.read_text().splitlines():
@@ -88,9 +117,9 @@ def load_params(path: Path, drop_hardware: bool = True) -> Dict[str, float]:
         if len(parts) < 2:
             continue
         name = parts[0]
-        if name.startswith(PRESET_EXCLUDED_PREFIXES) or any(entry in name for entry in BLACKLIST):
+        if name.startswith(PRESET_EXCLUDED_PREFIXES):
             continue
-        if drop_hardware and _is_hardware_param(name):
+        if vehicle_layer and (any(entry in name for entry in BLACKLIST) or _is_hardware_param(name)):
             continue
         try:
             params[name] = float(parts[1])
@@ -102,14 +131,18 @@ def load_params(path: Path, drop_hardware: bool = True) -> Dict[str, float]:
 def compose_params(vehicle_layers: List[Path], sitl_layers: List[Path]) -> Dict[str, float]:
     """Merge parameter layers into one set, with the SITL layers applied last.
 
-    Where a vehicle layer and a SITL layer both define a parameter the SITL value wins,
-    since it is the one the simulator was tuned with.
+    Where both define a parameter the SITL value wins, since it is the one the simulator
+    was tuned with, except for the driving tune in ``DYNAMICS_PARAMS``, which stays with
+    the vehicle that was tuned around it.
     """
     params: Dict[str, float] = {}
     for path in vehicle_layers:
         params.update(load_params(path))
     for path in sitl_layers:
-        params.update(load_params(path, drop_hardware=False))
+        for name, value in load_params(path, vehicle_layer=False).items():
+            if name in params and _is_dynamics_param(name):
+                continue
+            params[name] = value
     return params
 
 

@@ -12,9 +12,10 @@
 # SERVO*_TRIM/_REVERSED (real ESC wiring, which would make the simulated hull spin),
 # RELAY*_FUNCTION, RC_OPTIONS and WNDVN_TYPE.
 #
-# The rover SITL layer is applied on top of this file, so where both define a parameter
-# the SITL value wins: ATC_SPEED_P, ATC_STR_RAT_FF, CRUISE_SPEED, CRUISE_THROTTLE,
-# WP_RADIUS and WP_SPEED all end up at their simulator values.
+# The rover SITL layer is applied on top of this file and wins where both define a
+# parameter, except for the driving tune below — the speeds, gains and turn geometry are
+# only coherent together, and this hull cruises at 1 m/s where the generic rover SITL
+# vehicle the overlay describes does 5 m/s.
 
 # Hull and thruster mixing: two thrusters, differential (skid) steering.
 FRAME_CLASS      2     # Boat — makes the firmware report MAV_TYPE_SURFACE_BOAT
