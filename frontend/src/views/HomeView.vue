@@ -1,9 +1,9 @@
 <script setup lang="ts">
+import { BlueExpansiblePanel } from '@bluerobotics/bluevue'
 import { onMounted, ref } from 'vue'
 
 import logo from '@/assets/br-logo-white.svg'
 import EnvironmentPanel from '@/components/EnvironmentPanel.vue'
-import ExpansiblePanel from '@/components/ExpansiblePanel.vue'
 import LocationPanel from '@/components/LocationPanel.vue'
 import StatusPanel from '@/components/StatusPanel.vue'
 import VehiclePanel from '@/components/VehiclePanel.vue'
@@ -87,7 +87,7 @@ onMounted(async () => {
     <div class="px-5 py-4">
       <StatusPanel ref="statusPanel" />
 
-      <ExpansiblePanel
+      <BlueExpansiblePanel
         title="Vehicle & frame"
         theme="dark"
         :expanded="true"
@@ -96,9 +96,9 @@ onMounted(async () => {
           ref="vehiclePanel"
           @changed="onVehicleChanged"
         />
-      </ExpansiblePanel>
+      </BlueExpansiblePanel>
 
-      <ExpansiblePanel
+      <BlueExpansiblePanel
         title="Spawn location"
         theme="dark"
         :expanded="true"
@@ -107,15 +107,15 @@ onMounted(async () => {
           ref="locationPanel"
           @changed="onVehicleChanged"
         />
-      </ExpansiblePanel>
+      </BlueExpansiblePanel>
 
-      <ExpansiblePanel
+      <BlueExpansiblePanel
         title="Ambient conditions"
         theme="dark"
         :expanded="true"
       >
         <EnvironmentPanel ref="environmentPanel" />
-      </ExpansiblePanel>
+      </BlueExpansiblePanel>
     </div>
   </v-container>
 </template>

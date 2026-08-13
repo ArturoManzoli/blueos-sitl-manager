@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 
+import { BlueButtonGroup, BlueMenu, type BlueMenuItem, BluePromptDialog, BlueSelect } from '@bluerobotics/bluevue'
+
 import ApplyProgressDialog from '@/components/ApplyProgressDialog.vue'
-import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
-import BlueSelect from '@/components/BlueSelect.vue'
-import NamePromptDialog from '@/components/NamePromptDialog.vue'
-import PresetMenu, { type PresetMenuItem } from '@/components/PresetMenu.vue'
 import { hideLoading, showLoading } from '@/composables/loading'
 import { notify, notifyError } from '@/composables/notify'
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
@@ -128,7 +126,7 @@ const saveDisabled = computed(() => presetsFull.value || !isSitl.value || pendin
 const saveHint = computed(() => fullHint.value ?? sitlHint.value ?? pendingHint.value)
 
 // The three-dots menu, which acts on the vehicle rather than on any one preset.
-const presetActions = computed<PresetMenuItem[]>(() => [
+const presetActions = computed<BlueMenuItem[]>(() => [
   {
     title: 'Save current config as preset',
     icon: 'mdi-content-save-outline',
@@ -155,7 +153,7 @@ const presetActions = computed<PresetMenuItem[]>(() => [
 // What a long press offers on the Custom entry. Both roads lead to the same dialog: naming
 // the configuration is what turns it into a preset, and doing so hands Custom back empty for
 // the next experiment.
-const customItems = computed<PresetMenuItem[]>(() => [
+const customItems = computed<BlueMenuItem[]>(() => [
   {
     title: 'Save as preset…',
     icon: 'mdi-content-save-outline',
@@ -175,12 +173,12 @@ const customItems = computed<PresetMenuItem[]>(() => [
 // What a long press offers for one preset. A built-in can be reloaded, edited, renamed (as a
 // copy) and exported, but never deleted: an edited one is reverted to its shipped definition
 // instead, which is what keeps the curated presets impossible to lose.
-const contextItems = computed<PresetMenuItem[]>(() => {
+const contextItems = computed<BlueMenuItem[]>(() => {
   const preset = contextPreset.value
   if (!preset) {
     return contextCustom.value ? customItems.value : []
   }
-  const items: PresetMenuItem[] = [
+  const items: BlueMenuItem[] = [
     {
       // The one place a preset is written to the vehicle without going through Apply: it
       // asks for the preset the vehicle is already on to be laid down again, which the
@@ -554,7 +552,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
           @context-menu="onPresetContextMenu"
         />
       </div>
-      <PresetMenu
+      <BlueMenu
         v-model="presetMenuOpen"
         :items="presetActions"
       >
@@ -568,8 +566,8 @@ async function onImportFileSelected(event: Event): Promise<void> {
             <v-icon>mdi-dots-vertical</v-icon>
           </button>
         </template>
-      </PresetMenu>
-      <PresetMenu
+      </BlueMenu>
+      <BlueMenu
         v-model="contextMenuOpen"
         :items="contextItems"
         :target="contextTarget"
@@ -621,7 +619,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
       @restarted="onJobRestarted"
     />
 
-    <NamePromptDialog
+    <BluePromptDialog
       v-model="renameDialogOpen"
       icon="mdi-rename-box-outline"
       title="Rename preset"
@@ -636,7 +634,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
       @confirm="confirmRenamePreset"
     />
 
-    <NamePromptDialog
+    <BluePromptDialog
       v-model="saveDialogOpen"
       icon="mdi-content-save-outline"
       title="Save current configuration"

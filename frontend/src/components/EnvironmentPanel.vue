@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
-import BlueSelect from '@/components/BlueSelect.vue'
-import BlueSlider from '@/components/BlueSlider.vue'
+import { BlueButtonGroup, BlueSelect, BlueSlider } from '@bluerobotics/bluevue'
+
 import { notify, notifyError } from '@/composables/notify'
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
 import { EnvironmentApi } from '@/services/api'

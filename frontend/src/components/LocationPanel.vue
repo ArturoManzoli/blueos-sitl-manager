@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
-import BlueInput from '@/components/BlueInput.vue'
+import { BlueButtonGroup, BlueInput, BlueMenu, type BlueMenuItem, BluePromptDialog } from '@bluerobotics/bluevue'
+
 import MapPicker from '@/components/MapPicker.vue'
-import NamePromptDialog from '@/components/NamePromptDialog.vue'
-import PresetMenu, { type PresetMenuItem } from '@/components/PresetMenu.vue'
 import { hideLoading, showLoading } from '@/composables/loading'
 import { notify, notifyError } from '@/composables/notify'
 import { isSitl } from '@/composables/vehicleStatus'
@@ -60,7 +58,7 @@ const presetsFull = computed(() => presets.value.length >= MAX_PRESETS)
 const fullHint = computed(() => (presetsFull.value ? `The row holds ${MAX_PRESETS} presets; delete one first` : undefined))
 
 // The three-dots menu, which acts on the coordinates in the form rather than on any preset.
-const presetActions = computed<PresetMenuItem[]>(() => [
+const presetActions = computed<BlueMenuItem[]>(() => [
   {
     title: 'Save current location as preset',
     icon: 'mdi-content-save-outline',
@@ -80,12 +78,12 @@ const presetActions = computed<PresetMenuItem[]>(() => [
 
 // What a long press offers for one preset, matching the vehicle presets: a built-in can be
 // edited, renamed (as a copy) and exported, but only ever reverted, never deleted.
-const contextItems = computed<PresetMenuItem[]>(() => {
+const contextItems = computed<BlueMenuItem[]>(() => {
   const preset = contextPreset.value
   if (!preset) {
     return []
   }
-  const items: PresetMenuItem[] = [
+  const items: BlueMenuItem[] = [
     {
       title: 'Reload profile',
       icon: 'mdi-refresh',
@@ -317,7 +315,7 @@ async function applyLocation(): Promise<void> {
           @context-menu="onPresetContextMenu"
         />
       </div>
-      <PresetMenu
+      <BlueMenu
         v-model="presetMenuOpen"
         :items="presetActions"
       >
@@ -331,8 +329,8 @@ async function applyLocation(): Promise<void> {
             <v-icon>mdi-dots-vertical</v-icon>
           </button>
         </template>
-      </PresetMenu>
-      <PresetMenu
+      </BlueMenu>
+      <BlueMenu
         v-model="contextMenuOpen"
         :items="contextItems"
         :target="contextTarget"
@@ -437,7 +435,7 @@ async function applyLocation(): Promise<void> {
       </v-btn>
     </div>
 
-    <NamePromptDialog
+    <BluePromptDialog
       v-model="saveDialogOpen"
       icon="mdi-map-marker-plus-outline"
       title="Save current location"
@@ -447,7 +445,7 @@ async function applyLocation(): Promise<void> {
       @confirm="savePreset"
     />
 
-    <NamePromptDialog
+    <BluePromptDialog
       v-model="renameDialogOpen"
       icon="mdi-rename-box-outline"
       title="Rename preset"

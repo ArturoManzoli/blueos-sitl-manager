@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import Loading from '@/components/Loading.vue'
+import { BlueLoadingDialog } from '@bluerobotics/bluevue'
+
+import { hideLoading, loading } from '@/composables/loading'
 import { snackbar } from '@/composables/notify'
 import HomeView from '@/views/HomeView.vue'
 </script>
@@ -10,7 +12,14 @@ import HomeView from '@/views/HomeView.vue'
       <HomeView />
     </v-main>
 
-    <Loading />
+    <!-- The overlay is driven from anywhere through the loading composable, so closing a
+         dismissible one has to travel back the same way rather than only to the dialog. -->
+    <BlueLoadingDialog
+      :model-value="loading.show"
+      :message="loading.message"
+      :dismissible="loading.dismissible"
+      @update:model-value="hideLoading"
+    />
 
     <v-snackbar
       v-model="snackbar.show"
