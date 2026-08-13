@@ -23,7 +23,6 @@ defineExpose({ reload })
 </script>
 
 <template>
-  <!-- px-8 matches ExpansiblePanel's content inset so this row lines up with the panels. -->
   <div class="px-8">
     <div
       v-if="vehicleStatus && !vehicleStatus.is_sitl"
