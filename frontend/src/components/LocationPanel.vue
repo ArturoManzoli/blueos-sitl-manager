@@ -31,26 +31,38 @@ const contextPreset = ref<LocationPreset | null>(null)
 const contextTarget = ref<[number, number]>([0, 0])
 const contextMenuOpen = ref(false)
 
-// Close enough that the same spot typed by hand or picked off the map still counts, without
-// two distinct presets ever matching at once.
+// Close enough that the same spot typed by hand or picked off the map still counts.
 function isSameSpot(a: SitlLocation, b: SitlLocation): boolean {
   return Math.abs(a.latitude - b.latitude) < 1e-5 && Math.abs(a.longitude - b.longitude) < 1e-5
 }
 
-// Which preset the coordinates in the form currently sit on, empty when they sit on none.
-// Doubles as the button group's key, so the highlight follows coordinates that were typed or
-// picked off the map rather than only ones that arrived by clicking a preset.
-const matchedPresetName = computed(
-  () => presets.value.find((preset) => isSameSpot(preset.location, location.value))?.name ?? ''
-)
+// The preset last picked or created, which settles the highlight while the coordinates still
+// sit on it. Renaming a built-in leaves a copy on the same spot as its source, so the spot
+// alone no longer names one preset, and the row would light up whichever comes first.
+const chosenPresetName = ref('')
+
+// Which preset the coordinates in the form sit on, empty when they sit on none. Doubles as the
+// button group's key, so the highlight follows coordinates that were typed or picked off the
+// map rather than only ones that arrived by clicking a preset.
+const matchedPresetName = computed(() => {
+  const chosen = presets.value.find((preset) => preset.name === chosenPresetName.value)
+  if (chosen && isSameSpot(chosen.location, location.value)) {
+    return chosen.name
+  }
+  return presets.value.find((preset) => isSameSpot(preset.location, location.value))?.name ?? ''
+})
+
+// Fills the form from a preset, which is all selecting one means here.
+function selectPreset(preset: LocationPreset): void {
+  location.value = { ...preset.location }
+  chosenPresetName.value = preset.name
+}
 
 const presetButtons = computed(() =>
   presets.value.map((preset) => ({
     name: preset.name,
     preSelected: preset.name === matchedPresetName.value,
-    onSelected: () => {
-      location.value = { ...preset.location }
-    },
+    onSelected: () => selectPreset(preset),
   })),
 )
 
@@ -84,13 +96,7 @@ const contextItems = computed<BlueMenuItem[]>(() => {
     return []
   }
   const items: BlueMenuItem[] = [
-    {
-      title: 'Reload profile',
-      icon: 'mdi-refresh',
-      action: () => {
-        location.value = { ...preset.location }
-      },
-    },
+    { title: 'Reload profile', icon: 'mdi-refresh', action: () => selectPreset(preset) },
     {
       title: 'Save current coordinates here',
       icon: 'mdi-content-save-outline',
@@ -199,6 +205,9 @@ async function savePreset(name: string): Promise<void> {
   try {
     const saved = await LocationApi.savePreset({ name, location: { ...location.value } })
     await loadPresets()
+    // Saved from the coordinates on screen, which another preset may already hold, so the row
+    // is told which name to light up rather than left to work it out from the spot.
+    chosenPresetName.value = saved.name
     notify(`Saved location preset "${saved.name}".`, 'success')
   } catch (error) {
     notifyError(error, 'Could not save the location preset')
@@ -214,8 +223,15 @@ async function confirmRenamePreset(newName: string): Promise<void> {
   }
   showLoading(`Renaming "${preset.name}"…`)
   try {
-    await LocationApi.renamePreset(preset.name, newName)
+    const renamed = await LocationApi.renamePreset(preset.name, newName)
     await loadPresets()
+    if (preset.builtin) {
+      // A built-in is renamed by copying it, so the row gains an entry on a spot that already
+      // had one and nothing would look to have happened. Moving onto it is what shows it.
+      selectPreset(renamed)
+    } else if (chosenPresetName.value === preset.name) {
+      chosenPresetName.value = newName
+    }
     notify(
       preset.builtin
         ? `Copied "${preset.name}" to "${newName}"; the built-in stays in place.`
@@ -269,6 +285,10 @@ async function onImportFileSelected(event: Event): Promise<void> {
     const preset = JSON.parse(await file.text()) as LocationPreset
     const saved = await LocationApi.savePreset({ name: preset.name, location: preset.location })
     await loadPresets()
+    // Moving onto what arrived is what shows it: the row would otherwise light up whichever
+    // preset already sat on those coordinates, and an import onto a taken spot would read as
+    // having done nothing.
+    selectPreset(saved)
     notify(`Imported location preset "${saved.name}".`, 'success')
   } catch (error) {
     notifyError(error, 'Could not import the location preset')
