@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import BlueBanner from '@/components/BlueBanner.vue'
 import { notifyError } from '@/composables/notify'
 import { refreshVehicleStatus, vehicleStatus } from '@/composables/vehicleStatus'
 
@@ -24,16 +25,13 @@ defineExpose({ reload })
 
 <template>
   <div class="px-8">
-    <div
+    <BlueBanner
       v-if="vehicleStatus && !vehicleStatus.is_sitl"
-      class="flex items-center gap-2 rounded-[6px] bg-[#FB8C0022] border border-[#FB8C0055] text-[#FFB74D] text-xs px-3 py-2 mb-3"
-    >
-      <v-icon size="16">
-        mdi-alert
-      </v-icon>
-      The active board is not SITL, so everything that writes to the vehicle is disabled.
-      Select SITL in the Autopilot Firmware page to use this extension.
-    </div>
+      class="mb-3"
+      severity="warning"
+      text="The active board is not SITL, so everything that writes to the vehicle is disabled.
+        Select SITL in the Autopilot Firmware page to use this extension."
+    />
 
     <div class="flex flex-wrap items-stretch gap-2">
       <div
