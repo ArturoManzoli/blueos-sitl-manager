@@ -1,16 +1,27 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { BlueButtonGroup, BlueMenu, type BlueMenuItem, BluePromptDialog, BlueSelect } from '@bluerobotics/bluevue'
+import {
+  BlueButton,
+  BlueButtonGroup,
+  BlueIcon,
+  BlueMenu,
+  type BlueMenuItem,
+  BluePromptDialog,
+  BlueSelect,
+  useBlueLoading,
+  useBlueSnackbar,
+} from '@bluerobotics/bluevue'
 
 import ApplyProgressDialog from '@/components/ApplyProgressDialog.vue'
-import { hideLoading, showLoading } from '@/composables/loading'
-import { notify, notifyError } from '@/composables/notify'
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
 import { MAX_PRESETS, VehicleApi } from '@/services/api'
 import type { ApplyJob, VehiclePreset, VehicleType } from '@/types/sitl'
 
 const emit = defineEmits<{ (event: 'changed'): void }>()
+
+const { notify, notifyError } = useBlueSnackbar()
+const { showLoading, hideLoading } = useBlueLoading()
 
 const CUSTOM_PRESET = 'Custom'
 
@@ -348,7 +359,7 @@ function onJobFinished(job: ApplyJob): void {
   if (job.state !== 'succeeded') {
     userChoice.value = null
   }
-  notify(job.detail, job.state === 'succeeded' ? 'success' : 'warning')
+  notify(job.detail, { severity: job.state === 'succeeded' ? 'success' : 'warning' })
 }
 
 watch(progressOpen, (open) => {
@@ -410,7 +421,7 @@ async function confirmSavePreset(name: string, description: string): Promise<voi
     userChoice.value = preset.name
     appliedPresetName.value = preset.name
     selectedPresetName.value = preset.name
-    notify(`Saved preset "${preset.name}" with ${Object.keys(preset.parameters).length} parameters.`, 'success')
+    notify(`Saved preset "${preset.name}" with ${Object.keys(preset.parameters).length} parameters.`, { severity: 'success' })
   } catch (error) {
     notifyError(error, 'Could not save preset')
   } finally {
@@ -457,7 +468,7 @@ async function overwritePreset(preset: VehiclePreset): Promise<void> {
   try {
     const saved = await VehicleApi.savePreset(preset.name, preset.description)
     await loadPresets()
-    notify(`Updated "${saved.name}" with the current configuration.`, 'success')
+    notify(`Updated "${saved.name}" with the current configuration.`, { severity: 'success' })
   } catch (error) {
     notifyError(error, `Could not update ${preset.name}`)
   } finally {
@@ -483,7 +494,7 @@ async function confirmRenamePreset(newName: string): Promise<void> {
       preset.builtin
         ? `Copied "${preset.name}" to "${newName}"; the built-in stays in place.`
         : `Renamed "${preset.name}" to "${newName}".`,
-      'success'
+      { severity: 'success' }
     )
   } catch (error) {
     notifyError(error, `Could not rename ${preset.name}`)
@@ -504,7 +515,7 @@ async function removePreset(preset: VehiclePreset): Promise<void> {
     await loadPresets()
     await loadActivePreset()
     await showApplied()
-    notify(result.detail, 'success')
+    notify(result.detail, { severity: 'success' })
   } catch (error) {
     notifyError(error, `Could not delete ${preset.name}`)
   } finally {
@@ -525,7 +536,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
     const saved = await VehicleApi.importPreset(preset)
     await loadPresets()
     await loadActivePreset()
-    notify(`Imported preset "${saved.name}".`, 'success')
+    notify(`Imported preset "${saved.name}".`, { severity: 'success' })
   } catch (error) {
     notifyError(error, 'Could not import preset')
   } finally {
@@ -561,7 +572,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
             :class="busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"
             title="Preset actions"
           >
-            <v-icon>mdi-dots-vertical</v-icon>
+            <BlueIcon name="mdi-dots-vertical" />
           </button>
         </template>
       </BlueMenu>
@@ -599,15 +610,16 @@ async function onImportFileSelected(event: Event): Promise<void> {
     />
 
     <div class="flex items-center justify-end gap-2">
-      <v-btn
-        color="primary"
-        size="small"
+      <BlueButton
+        variant="filled"
+        density="compact"
+        theme="dark"
         :loading="busy"
         :disabled="locked || !pendingChange"
         @click="applySelection"
       >
         Apply and restart
-      </v-btn>
+      </BlueButton>
     </div>
 
     <ApplyProgressDialog

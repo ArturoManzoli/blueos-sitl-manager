@@ -1,16 +1,27 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import { BlueButtonGroup, BlueInput, BlueMenu, type BlueMenuItem, BluePromptDialog } from '@bluerobotics/bluevue'
+import {
+  BlueButton,
+  BlueButtonGroup,
+  BlueIcon,
+  BlueInput,
+  BlueMenu,
+  type BlueMenuItem,
+  BluePromptDialog,
+  useBlueLoading,
+  useBlueSnackbar,
+} from '@bluerobotics/bluevue'
 
 import MapPicker from '@/components/MapPicker.vue'
-import { hideLoading, showLoading } from '@/composables/loading'
-import { notify, notifyError } from '@/composables/notify'
 import { isSitl } from '@/composables/vehicleStatus'
 import { LocationApi, MAX_PRESETS } from '@/services/api'
 import type { LocationPreset, SitlLocation } from '@/types/sitl'
 
 const emit = defineEmits<{ (event: 'changed'): void }>()
+
+const { notify, notifyError } = useBlueSnackbar()
+const { showLoading, hideLoading } = useBlueLoading()
 
 const location = ref<SitlLocation>({ latitude: -27.563, longitude: -48.459, altitude: 0, heading: 270 })
 // Where the vehicle was last read to spawn, which is what the form is measured against to
@@ -150,7 +161,7 @@ async function fetchFromVehicle(): Promise<void> {
   fetching.value = true
   try {
     if (await refresh()) {
-      notify('Read the spawn location back from the vehicle.', 'info')
+      notify('Read the spawn location back from the vehicle.', { severity: 'info' })
     }
   } finally {
     fetching.value = false
@@ -172,7 +183,7 @@ defineExpose({ reload })
 
 function useBrowserLocation(): void {
   if (!navigator.geolocation) {
-    notify('Geolocation is not available in this browser.', 'warning')
+    notify('Geolocation is not available in this browser.', { severity: 'warning' })
     return
   }
   navigator.geolocation.getCurrentPosition(
@@ -182,9 +193,9 @@ function useBrowserLocation(): void {
         latitude: Number(position.coords.latitude.toFixed(6)),
         longitude: Number(position.coords.longitude.toFixed(6)),
       }
-      notify('Filled coordinates from your browser location.', 'info')
+      notify('Filled coordinates from your browser location.', { severity: 'info' })
     },
-    (error) => notify(`Could not get browser location: ${error.message}`, 'warning'),
+    (error) => notify(`Could not get browser location: ${error.message}`, { severity: 'warning' }),
   )
 }
 
@@ -208,7 +219,7 @@ async function savePreset(name: string): Promise<void> {
     // Saved from the coordinates on screen, which another preset may already hold, so the row
     // is told which name to light up rather than left to work it out from the spot.
     chosenPresetName.value = saved.name
-    notify(`Saved location preset "${saved.name}".`, 'success')
+    notify(`Saved location preset "${saved.name}".`, { severity: 'success' })
   } catch (error) {
     notifyError(error, 'Could not save the location preset')
   } finally {
@@ -236,7 +247,7 @@ async function confirmRenamePreset(newName: string): Promise<void> {
       preset.builtin
         ? `Copied "${preset.name}" to "${newName}"; the built-in stays in place.`
         : `Renamed "${preset.name}" to "${newName}".`,
-      'success'
+      { severity: 'success' }
     )
   } catch (error) {
     notifyError(error, `Could not rename ${preset.name}`)
@@ -250,7 +261,7 @@ async function removePreset(preset: LocationPreset): Promise<void> {
   try {
     const result = await LocationApi.deletePreset(preset.name)
     await loadPresets()
-    notify(result.detail, 'success')
+    notify(result.detail, { severity: 'success' })
   } catch (error) {
     notifyError(error, `Could not delete ${preset.name}`)
   } finally {
@@ -289,7 +300,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
     // preset already sat on those coordinates, and an import onto a taken spot would read as
     // having done nothing.
     selectPreset(saved)
-    notify(`Imported location preset "${saved.name}".`, 'success')
+    notify(`Imported location preset "${saved.name}".`, { severity: 'success' })
   } catch (error) {
     notifyError(error, 'Could not import the location preset')
   } finally {
@@ -303,7 +314,7 @@ async function applyLocation(): Promise<void> {
   let applied = false
   try {
     const result = await LocationApi.set(location.value)
-    notify(result.detail, result.success ? 'success' : 'warning')
+    notify(result.detail, { severity: result.success ? 'success' : 'warning' })
     applied = true
   } catch (error) {
     notifyError(error, 'Could not set the spawn location')
@@ -346,7 +357,7 @@ async function applyLocation(): Promise<void> {
             :class="busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"
             title="Preset actions"
           >
-            <v-icon>mdi-dots-vertical</v-icon>
+            <BlueIcon name="mdi-dots-vertical" />
           </button>
         </template>
       </BlueMenu>
@@ -423,36 +434,39 @@ async function applyLocation(): Promise<void> {
 
     <div class="flex items-center justify-between gap-2">
       <div class="flex items-center gap-2">
-        <v-btn
-          size="small"
-          prepend-icon="mdi-crosshairs-gps"
+        <BlueButton
+          density="compact"
+          theme="dark"
+          icon="mdi-crosshairs-gps"
           :disabled="busy || fetching"
           @click="useBrowserLocation"
         >
           Use my location
-        </v-btn>
-        <v-btn
+        </BlueButton>
+        <BlueButton
           class="ml-2"
-          size="small"
-          prepend-icon="mdi-refresh"
+          density="compact"
+          theme="dark"
+          icon="mdi-refresh"
           :loading="fetching"
           :disabled="busy"
           @click="fetchFromVehicle"
         >
           Fetch from vehicle
-        </v-btn>
+        </BlueButton>
       </div>
       <!-- Only the write waits for the simulator: picking, saving and exporting coordinates
            is the same work on any board. -->
-      <v-btn
-        color="primary"
-        size="small"
+      <BlueButton
+        variant="filled"
+        density="compact"
+        theme="dark"
         :loading="busy"
         :disabled="!isSitl || !pendingChange || fetching"
         @click="applyLocation"
       >
         Apply and restart
-      </v-btn>
+      </BlueButton>
     </div>
 
     <BluePromptDialog

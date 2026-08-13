@@ -1,14 +1,21 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import { BlueButtonGroup, BlueSelect, BlueSlider } from '@bluerobotics/bluevue'
+import {
+  type BannerContent,
+  BlueBannerGroup,
+  BlueButton,
+  BlueButtonGroup,
+  BlueSelect,
+  BlueSlider,
+  useBlueSnackbar,
+} from '@bluerobotics/bluevue'
 
-import BlueBannerGroup from '@/components/BlueBannerGroup.vue'
-import { notify, notifyError } from '@/composables/notify'
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
 import { EnvironmentApi } from '@/services/api'
-import type { BannerContent } from '@/types/banner'
 import type { AppliedParams, Environment, EnvironmentPreset } from '@/types/sitl'
+
+const { notify, notifyError } = useBlueSnackbar()
 
 // Form state keeps every field as a concrete number so it binds cleanly to sliders.
 type EnvironmentForm = { [K in keyof Environment]-?: number }
@@ -194,10 +201,10 @@ const pendingChange = computed(() => {
 // simulator is not running, which is worth saying rather than reporting a clean success.
 function reportApplied(result: AppliedParams, what: string): void {
   if (result.unverified.length) {
-    notify(`${what}, but ${result.unverified.join(', ')} did not take. Try again.`, 'warning')
+    notify(`${what}, but ${result.unverified.join(', ')} did not take. Try again.`, { severity: 'warning' })
     return
   }
-  notify(`${what}.`, 'success')
+  notify(`${what}.`, { severity: 'success' })
 }
 
 // Driven by the view, which keeps the loading overlay up until every panel has its data.
@@ -423,15 +430,16 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
     <!-- Whatever the frame ignores sits below this row: the groups it can act on come first,
          and Apply draws the line between what is worth setting and what is only explained. -->
     <div class="order-4 flex justify-end">
-      <v-btn
-        size="small"
-        color="primary"
+      <BlueButton
+        variant="filled"
+        density="compact"
+        theme="dark"
         :loading="busy"
         :disabled="!isSitl || !pendingChange"
         @click="apply"
       >
         Apply conditions
-      </v-btn>
+      </BlueButton>
     </div>
   </div>
 </template>

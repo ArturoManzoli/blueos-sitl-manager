@@ -1,15 +1,16 @@
 <script setup lang="ts">
+import { BlueBanner, BlueStat, useBlueSnackbar } from '@bluerobotics/bluevue'
 import { computed } from 'vue'
 
-import BlueBanner from '@/components/BlueBanner.vue'
-import { notifyError } from '@/composables/notify'
 import { refreshVehicleStatus, vehicleStatus } from '@/composables/vehicleStatus'
 
+const { notifyError } = useBlueSnackbar()
+
 const fields = computed(() => [
-  { label: 'Board', value: vehicleStatus.value?.board ?? '—' },
-  { label: 'Firmware', value: vehicleStatus.value?.firmware_version ?? '—' },
-  { label: 'Frame', value: vehicleStatus.value?.frame ?? '—' },
-  { label: 'Vehicle type', value: vehicleStatus.value?.firmware_vehicle_type ?? '—' },
+  { label: 'Board', value: vehicleStatus.value?.board },
+  { label: 'Firmware', value: vehicleStatus.value?.firmware_version },
+  { label: 'Frame', value: vehicleStatus.value?.frame },
+  { label: 'Vehicle type', value: vehicleStatus.value?.firmware_vehicle_type },
 ])
 
 async function reload(): Promise<void> {
@@ -34,21 +35,12 @@ defineExpose({ reload })
     />
 
     <div class="flex flex-wrap items-stretch gap-2">
-      <div
+      <BlueStat
         v-for="field in fields"
         :key="field.label"
-        class="elevation-1 flex-1 min-w-[120px] rounded-[6px] bg-[#00000022] px-3 py-2"
-      >
-        <div class="text-[11px] uppercase tracking-wide text-[#ffffff66] truncate">
-          {{ field.label }}
-        </div>
-        <div
-          class="text-sm text-white truncate"
-          :title="String(field.value)"
-        >
-          {{ field.value }}
-        </div>
-      </div>
+        :label="field.label"
+        :value="field.value"
+      />
     </div>
   </div>
 </template>
