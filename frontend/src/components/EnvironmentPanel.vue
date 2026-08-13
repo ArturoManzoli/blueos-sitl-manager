@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 
 import { BlueButtonGroup, BlueSelect, BlueSlider } from '@bluerobotics/bluevue'
 
+import BlueBanner from '@/components/BlueBanner.vue'
 import { notify, notifyError } from '@/composables/notify'
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
 import { EnvironmentApi } from '@/services/api'
@@ -239,12 +240,6 @@ const degrees = (value: number): string => `${value.toFixed(0)}°`
 const meters = (value: number): string => `${value.toFixed(1)} m`
 const seconds = (value: number): string => `${value.toFixed(1)} s`
 const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
-
-const NOTE_BASE_CLASSES = 'flex items-center gap-2 rounded-[6px] border text-xs px-3 py-2'
-const noteClasses = (note: Note): string =>
-  note.warning
-    ? `${NOTE_BASE_CLASSES} bg-[#FB8C0022] border-[#FB8C0055] text-[#FFB74D]`
-    : `${NOTE_BASE_CLASSES} bg-[#4FC3F71A] border-[#4FC3F744] text-[#81D4FA]`
 </script>
 
 <template>
@@ -285,16 +280,13 @@ const noteClasses = (note: Note): string =>
         Wind
       </div>
       <div class="flex flex-col gap-3">
-        <div
+        <BlueBanner
           v-for="note in windNotes"
           :key="note.text"
-          :class="noteClasses(note)"
-        >
-          <v-icon size="16">
-            {{ note.warning ? 'mdi-alert' : 'mdi-information-outline' }}
-          </v-icon>
-          {{ note.text }}
-        </div>
+          :text="note.text"
+          :severity="note.warning ? 'warning' : 'info'"
+          :expanded="false"
+        />
         <BlueSlider
           v-model="environment.wind_speed"
           name="wind-speed"
@@ -383,16 +375,13 @@ const noteClasses = (note: Note): string =>
         Waves &amp; current
       </div>
       <div class="flex flex-col gap-3">
-        <div
+        <BlueBanner
           v-for="note in waterNotes"
           :key="note.text"
-          :class="noteClasses(note)"
-        >
-          <v-icon size="16">
-            mdi-alert
-          </v-icon>
-          {{ note.text }}
-        </div>
+          :text="note.text"
+          :severity="note.warning ? 'warning' : 'info'"
+          :expanded="false"
+        />
         <BlueSelect
           v-model="environment.wave_enable"
           label="Wave mode"
