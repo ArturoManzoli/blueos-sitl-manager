@@ -11,12 +11,11 @@
     "lint": "eslint . --ext .vue,.ts"
   },
   "dependencies": {
-    "@bluerobotics/bluevue": "0.1.1",
+    "@bluerobotics/bluevue": "0.2.0",
     "@mdi/font": "7.4.47",
     "axios": "1.7.7",
     "leaflet": "1.9.4",
-    "vue": "3.4.38",
-    "vuetify": "3.7.2"
+    "vue": "3.4.38"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.11",
@@ -29,7 +28,6 @@
     "tailwindcss": "4.1.11",
     "typescript": "5.5.4",
     "vite": "5.4.2",
-    "vite-plugin-vuetify": "2.0.4",
     "vue-tsc": "2.0.29"
   }
 }
