@@ -174,19 +174,14 @@ async def param_value_count(system_id: int = DEFAULT_SYSTEM_ID) -> Optional[int]
     return _message_counter(await read_message("PARAM_VALUE", system_id))
 
 
-async def get_param(
+async def _read_param_once(
     name: str,
-    system_id: int = DEFAULT_SYSTEM_ID,
-    timeout: float = 3.0,
-    poll_interval: float = 0.2,
-    since: Optional[int] = None,
+    system_id: int,
+    timeout: float,
+    poll_interval: float,
+    since: Optional[int],
 ) -> Optional[float]:
-    """Read one parameter by name, or None when the autopilot does not answer for it.
-
-    ``since`` is a PARAM_VALUE count from before the caller did something the autopilot
-    answers unprompted — a write, which it echoes — so that the echo counts as the answer
-    instead of being dismissed as stale. It defaults to the count at the time of the request.
-    """
+    """One request for a parameter and the wait for its answer."""
     if since is None:
         since = await param_value_count(system_id)
     await send_message(
@@ -207,10 +202,40 @@ async def get_param(
         since,
     )
     if message is None:
-        logger.warning(f"Timed out reading parameter {name}")
         return None
     value = message.get("param_value")
     return float(value) if isinstance(value, (int, float)) else None
+
+
+async def get_param(
+    name: str,
+    system_id: int = DEFAULT_SYSTEM_ID,
+    timeout: float = 3.0,
+    poll_interval: float = 0.2,
+    since: Optional[int] = None,
+    attempts: int = 1,
+) -> Optional[float]:
+    """Read one parameter by name, or None when the autopilot does not answer for it.
+
+    ``since`` is a PARAM_VALUE count from before the caller did something the autopilot
+    answers unprompted — a write, which it echoes — so that the echo counts as the answer
+    instead of being dismissed as stale. It defaults to the count at the time of the request.
+
+    ``attempts`` asks again when nothing comes back, and is worth spending wherever a missing
+    answer would otherwise pass for a missing value: the single PARAM_VALUE slot means another
+    client's read can carry this one's answer off, and an autopilot still settling after a
+    restart answers late rather than not at all.
+    """
+    for attempt in range(1, attempts + 1):
+        # Only the first attempt can honour the caller's count; asking again is a new request,
+        # and its answer has to be newer than that.
+        value = await _read_param_once(name, system_id, timeout, poll_interval, since if attempt == 1 else None)
+        if value is not None:
+            return value
+        if attempt < attempts:
+            logger.debug(f"No answer for parameter {name}; asking again")
+    logger.warning(f"Timed out reading parameter {name}")
+    return None
 
 
 async def get_param_by_index(

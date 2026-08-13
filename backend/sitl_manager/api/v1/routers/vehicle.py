@@ -43,20 +43,6 @@ FIRMWARE_TYPE_TO_VEHICLE = {
 }
 
 
-async def _read_frame_param(param: str) -> Optional[float]:
-    """Read a frame-defining parameter, allowing for an autopilot that just came back.
-
-    Detection runs right after a configuration change, when a read can land while the
-    simulator is still finding its feet. One unanswered read would report a vehicle that
-    matches no preset at all, so it gets a few tries before that is believed.
-    """
-    for _ in range(FRAME_PARAM_ATTEMPTS):
-        value = await mavlink.get_param(param, timeout=FRAME_PARAM_TIMEOUT)
-        if value is not None:
-            return value
-    return None
-
-
 async def _detect_active_preset(vehicle_type: str) -> Optional[str]:
     readings: Dict[str, Optional[float]] = {}
     for preset in all_vehicle_presets():
@@ -71,7 +57,7 @@ async def _detect_active_preset(vehicle_type: str) -> Optional[str]:
         if expected is None:
             continue
         if param not in readings:
-            readings[param] = await _read_frame_param(param)
+            readings[param] = await mavlink.get_param(param, timeout=FRAME_PARAM_TIMEOUT, attempts=FRAME_PARAM_ATTEMPTS)
         actual = readings[param]
         if actual is not None and round(actual) == round(expected):
             return preset.name
