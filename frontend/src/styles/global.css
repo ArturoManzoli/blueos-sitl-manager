@@ -35,14 +35,6 @@ body,
   background: #0C577B;
 }
 
-/* Set while a click is waiting on a request that has yet to show anything (see waitCursor).
-   The descendant rule and the !important are both load-bearing: without them the button that
-   was just clicked keeps its own pointer, which is exactly where the cursor is. */
-html.sitl-waiting,
-html.sitl-waiting * {
-  cursor: wait !important;
-}
-
 /* A button with no colour of its own is a secondary action, and reads like the selects and
    button groups next to it: a barely-there translucent fill rather than Vuetify's opaque
    surface. Colour classes (bg-primary and friends) opt out. */

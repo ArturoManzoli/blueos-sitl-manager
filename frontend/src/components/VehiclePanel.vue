@@ -7,7 +7,6 @@ import ApplyProgressDialog from '@/components/ApplyProgressDialog.vue'
 import { hideLoading, showLoading } from '@/composables/loading'
 import { notify, notifyError } from '@/composables/notify'
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
-import { withWaitCursor } from '@/composables/waitCursor'
 import { MAX_PRESETS, VehicleApi } from '@/services/api'
 import type { ApplyJob, VehiclePreset, VehicleType } from '@/types/sitl'
 
@@ -295,13 +294,12 @@ async function reload(): Promise<void> {
 
 defineExpose({ reload })
 
-// Every configuration change runs as a backend job; start it, then hand the first
-// snapshot to the progress dialog, which polls the rest. Starting one takes long enough to
-// notice, and nothing has appeared yet at that point, so the pointer carries the wait.
+// Every configuration change runs as a backend job; start it, then hand the first snapshot to
+// the progress dialog, which polls the rest. The Apply button spins for the wait in between.
 async function startJob(start: () => Promise<ApplyJob>, failureMessage: string): Promise<boolean> {
   busy.value = true
   try {
-    progressJob.value = await withWaitCursor(start)
+    progressJob.value = await start()
     progressOpen.value = true
     return true
   } catch (error) {
