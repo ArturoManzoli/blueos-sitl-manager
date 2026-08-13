@@ -32,8 +32,42 @@
   box-shadow: var(--bluevue-elevation-1-soft);
 }
 
+/* The metrics live here, not in utility classes: Tailwind's utilities sit in a cascade layer and a
+   host application's reset does not, so Vuetify's `* { padding: 0 }` beats them whatever their
+   selectors say, and the shut banner is left without the padding that makes it a square. */
+.bluevue-banner {
+  box-sizing: border-box;
+  height: 26px;
+  padding: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  /* Squeezed by the row it shares in a group, it loses the tail of its message rather than painting
+     it outside its own rounded box. */
+  overflow: hidden;
+}
+
+/* A box the size of the em, not of however wide the glyph happens to advance, so the shut banner is
+   26 x 26 whichever icon it carries. */
+.bluevue-banner__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+  line-height: 16px;
+}
+
+/* The message's gutter rides inside the window that opens, so the shut square keeps the even four
+   pixels around its icon. */
+.bluevue-banner__text {
+  padding: 0 8px;
+}
+
+/* Width is the whole of the animation: the row is as tall as its icon whether it is shut or open, so
+   nothing above or below the message moves and the banner only ever grows to the right. */
 .bluevue-banner__reveal {
-  transition: width 260ms ease-in-out, height 260ms ease-in-out;
+  transition: width 260ms ease-in-out;
 }
 
 /* Measuring lays the message out by its content and puts it back; no frame is painted in between,

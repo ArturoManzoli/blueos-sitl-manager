@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-type BannerSeverity = 'error' | 'warning' | 'info' | 'success'
+import type { BannerContent, BannerSeverity } from '@/types/banner'
 
 interface Look {
   icon: string
@@ -17,22 +17,24 @@ const LOOKS: Record<BannerSeverity, Look> = {
   success: { icon: 'mdi-check-circle-outline', color: '#A5D6A7', background: '#66BB6A22', border: '#66BB6A55' },
 }
 
-const props = defineProps<{
-  /** The message, which the banner is only as wide as while it is open. */
-  text: string
-  /** Which of the standard looks to take (default 'info'). */
-  severity?: BannerSeverity
-  /** An mdi class, in place of the severity's icon. */
-  icon?: string
-  /** Icon and text colour, in place of the severity's. */
-  color?: string
-  /** Fill, in place of the severity's. */
-  background?: string
-  /** Hairline, in place of the severity's. */
-  border?: string
-  /** Whether it starts open (default true). */
-  expanded?: boolean
-}>()
+const props = withDefaults(
+  defineProps<
+    BannerContent & {
+      /** Whether it starts open (default true). */
+      expanded?: boolean
+    }
+  >(),
+  // An absent boolean prop is `false` unless a default says otherwise, which would start every
+  // banner shut.
+  {
+    severity: undefined,
+    icon: undefined,
+    color: undefined,
+    background: undefined,
+    border: undefined,
+    expanded: undefined,
+  }
+)
 
 const emit = defineEmits<{
   (e: 'update:expanded', value: boolean): void
@@ -44,7 +46,6 @@ const label = ref<HTMLElement | null>(null)
 
 const isOpen = ref(props.expanded ?? true)
 const messageWidth = ref(0)
-const messageHeight = ref(0)
 const measured = ref(false)
 
 const look = computed(() => LOOKS[props.severity ?? 'info'])
@@ -55,26 +56,21 @@ const boxStyle = computed(() => ({
   borderColor: props.border ?? look.value.border,
 }))
 
-// The window onto the message, which is what grows and shrinks: the button around it is sized by
-// its content, so it follows along without a size of its own to animate. Shut is nothing to show
-// and needs no measurement; open before the first one is the message laid out as it lays itself
-// out, which is what the measurement will say anyway.
+// Shut has nothing to show and needs no measurement; open before the first one takes whatever room
+// there is, which is what the measurement will say anyway.
 const revealStyle = computed(() => {
   if (!isOpen.value) {
-    return { width: '0px', height: '0px' }
+    return { width: '0px' }
   }
-  return measured.value ? { width: `${messageWidth.value}px`, height: `${messageHeight.value}px` } : undefined
+  return measured.value ? { width: `${messageWidth.value}px` } : undefined
 })
 
-// The message is held at the width it was measured at whether the window is open or not, so it
-// keeps the shape it ends up in and the window uncovers it rather than rewrapping it every frame.
+// Held at its measured width in either state, so opening uncovers a line laid out once rather than
+// one relaid on every frame of the way.
 const labelStyle = computed(() => (measured.value ? { width: `${messageWidth.value}px` } : undefined))
 
-// How much room the message asks for, and how tall it is once it has it. Sizes are read off the
-// elements laid out by their content and put back within the one task, so nothing is painted in
-// between, and `transition: none` covers the reads in case one would otherwise leave a value for
-// an animation to start from. Fractions are kept and rounded up: a width rounded down by half a
-// pixel is a width the last word does not fit in.
+// The room there is for the message and the width it asks for, read off elements laid out by their
+// content and put back within the one task, so nothing is painted in between.
 function measure(): void {
   const button = box.value
   const pane = reveal.value
@@ -89,31 +85,31 @@ function measure(): void {
     button.style.cssText = buttonStyle
     pane.style.cssText = paneStyle
     message.style.cssText = messageStyle
+    // Resolve the restored width while transitions are off: `auto` is not a width an animation can
+    // start from, and the banner would jump to its new size rather than move to it.
+    void pane.getBoundingClientRect()
     button.classList.remove('bluevue-banner--measuring')
   }
   button.classList.add('bluevue-banner--measuring')
 
   button.style.width = '100%'
-  pane.style.width = 'auto'
-  pane.style.height = 'auto'
   pane.style.flex = '1 1 auto'
-  message.style.width = 'auto'
-  const room = message.getBoundingClientRect().width
-  // Nowhere to lay anything out, the banner being inside something closed or off screen: whatever
-  // it measured last is a better answer than none.
+  pane.style.width = 'auto'
+  message.style.width = '0px'
+  const room = pane.getBoundingClientRect().width
+  // Nothing to measure against inside something closed or off screen, and the last measurement
+  // beats none.
   if (room <= 0) {
     putBack()
     return
   }
 
   message.style.width = 'max-content'
-  const wanted = message.getBoundingClientRect().width
+  const wanted = Math.ceil(message.getBoundingClientRect().width)
 
-  // As wide as the message asks for, or as wide as there is room for, in which case it wraps and
-  // the banner is taller instead.
-  messageWidth.value = Math.min(Math.ceil(wanted), Math.floor(room))
-  message.style.width = `${messageWidth.value}px`
-  messageHeight.value = Math.ceil(message.getBoundingClientRect().height)
+  // A message too long for the room keeps its line and loses its tail to the edge, the pointer
+  // being where the whole of it is read either way.
+  messageWidth.value = Math.min(wanted, Math.floor(room))
 
   putBack()
   measured.value = true
@@ -130,19 +126,16 @@ let observer: ResizeObserver | null = null
 
 onMounted(() => {
   measure()
-  // The icon is a glyph, so how much of the row it takes is one thing before the font arrives and
-  // another after.
+  // The message is text, so the width it asks for changes when the font arrives.
   void document.fonts?.ready.then(measure)
   const parent = box.value?.parentElement
   if (parent) {
-    // Only a change in the room available is worth measuring again for: opening the banner makes
-    // its surroundings taller, and measuring from inside that notification loops.
+    // Width changes only, and on the next frame: laying the message out again from inside the
+    // notification resizes what is being reported on, which the browser calls a loop.
     let room = parent.clientWidth
     observer = new ResizeObserver(() => {
       if (parent.clientWidth !== room) {
         room = parent.clientWidth
-        // On the next frame rather than here: laying the message out again from inside the
-        // notification resizes what is being reported on, which the browser calls a loop.
         requestAnimationFrame(measure)
       }
     })
@@ -172,29 +165,26 @@ watch(
   <button
     ref="box"
     type="button"
-    class="bluevue-banner bluevue-elevation-1-soft flex w-fit items-start rounded-[6px] border text-left text-xs cursor-pointer px-3 py-2"
+    class="bluevue-banner bluevue-elevation-1-soft flex w-fit items-center rounded-[6px] border text-left cursor-pointer"
     :style="boxStyle"
     :aria-expanded="isOpen"
     :aria-label="text"
-    :title="isOpen ? undefined : text"
+    :title="text"
     @click="toggle"
   >
     <span
-      class="mdi shrink-0 text-[16px] leading-none"
+      class="mdi bluevue-banner__icon shrink-0"
       :class="props.icon ?? look.icon"
     />
-    <!-- Free to shrink until there is a measurement to hold it to, so a banner opened before it
-         could measure itself gives its message the room there is rather than clipping it. -->
     <span
       ref="reveal"
       class="bluevue-banner__reveal overflow-hidden"
       :class="measured ? 'shrink-0' : ''"
       :style="revealStyle"
     >
-      <!-- The gap after the icon rides with the message, so a shut window leaves none of it. -->
       <span
         ref="label"
-        class="block pl-2"
+        class="bluevue-banner__text block whitespace-nowrap"
         :style="labelStyle"
       >{{ text }}</span>
     </span>
