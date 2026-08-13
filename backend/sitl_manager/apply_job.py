@@ -53,9 +53,12 @@ PARAM_ATTEMPTS = 2
 # Long enough for the autopilot being replaced to fall silent before its successor is looked for.
 RESTART_SETTLE = 2.0
 
-# Reading the spawn location holds up a vehicle change that is about to take minutes, so a
-# parameter that does not answer promptly is treated as unreadable and defaulted instead.
+# Reading the spawn location holds up a vehicle change that is about to take minutes, so each
+# parameter gets a short wait — asked again a few times, since an answer lost to another
+# client's read is not a parameter without a value — before it is treated as unreadable. An
+# autopilot that answers for none of the four spends eighteen seconds of that change here.
 SPAWN_READ_TIMEOUT = 1.5
+SPAWN_READ_ATTEMPTS = 3
 
 
 class _Request(NamedTuple):
@@ -154,7 +157,7 @@ async def _read_spawn() -> Dict[str, float]:
     """
     spawn: Dict[str, float] = {}
     for field_name, param in LOCATION_PARAM_MAP.items():
-        value = await mavlink.get_param(param, timeout=SPAWN_READ_TIMEOUT)
+        value = await mavlink.get_param(param, timeout=SPAWN_READ_TIMEOUT, attempts=SPAWN_READ_ATTEMPTS)
         spawn[param] = DEFAULT_SPAWN_BY_FIELD[field_name] if value is None else value
 
     latitude, longitude = LOCATION_PARAM_MAP["latitude"], LOCATION_PARAM_MAP["longitude"]
