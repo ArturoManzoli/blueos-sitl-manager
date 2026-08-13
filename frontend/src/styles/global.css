@@ -18,6 +18,37 @@
 }
 
 /* ==========================================================================================
+   BlueBanner: written the way the package writes its shared styling, so this block moves into
+   bluevue.css as it stands once the component ships there.
+   ========================================================================================== */
+
+:root {
+  /* The elevation the buttons rest at, with each of its three shadows at half the alpha: a
+     note is raised off the surface less than something meant to be pressed. */
+  --bluevue-elevation-1-soft: 0 2px 1px -1px #0000001a, 0 1px 1px 0 #00000012, 0 1px 3px 0 #0000000f;
+}
+
+.bluevue-elevation-1-soft {
+  box-shadow: var(--bluevue-elevation-1-soft);
+}
+
+.bluevue-banner__reveal {
+  transition: width 260ms ease-in-out, height 260ms ease-in-out;
+}
+
+/* Measuring lays the message out by its content and puts it back; no frame is painted in between,
+   but the geometry it reads would otherwise be somewhere for an animation to start from. */
+.bluevue-banner--measuring .bluevue-banner__reveal {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bluevue-banner__reveal {
+    transition: none;
+  }
+}
+
+/* ==========================================================================================
    SITL Manager: styles belonging to this extension, including the Vuetify surfaces it still
    uses outside the Blue* controls.
    ========================================================================================== */
