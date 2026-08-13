@@ -3,10 +3,11 @@ import { computed, ref } from 'vue'
 
 import { BlueButtonGroup, BlueSelect, BlueSlider } from '@bluerobotics/bluevue'
 
-import BlueBanner from '@/components/BlueBanner.vue'
+import BlueBannerGroup from '@/components/BlueBannerGroup.vue'
 import { notify, notifyError } from '@/composables/notify'
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
 import { EnvironmentApi } from '@/services/api'
+import type { BannerContent } from '@/types/banner'
 import type { AppliedParams, Environment, EnvironmentPreset } from '@/types/sitl'
 
 // Form state keeps every field as a concrete number so it binds cleanly to sliders.
@@ -100,33 +101,28 @@ const altitudeApplies = computed(() => windApplies.value && environment.value.wi
 // A grey slider says what cannot be changed but not why, so each group explains itself: what the
 // running frame ignores outright, the wind it would take but silently scale away, and what the
 // wind stands in for on a vehicle that has no air around it.
-interface Note {
-  text: string
-  warning: boolean
-}
-
-const windNotes = computed<Note[]>(() => {
+const windNotes = computed<BannerContent[]>(() => {
   if (!frameKnown.value) {
     return []
   }
   if (model.value.noWind) {
-    return [{ text: `The ${frame.value} frame ignores wind — it ${model.value.noWind}.`, warning: true }]
+    return [{ text: `The ${frame.value} frame ignores wind — it ${model.value.noWind}.`, severity: 'warning' }]
   }
-  const notes: Note[] = []
+  const notes: BannerContent[] = []
   if (model.value.surface && environment.value.wind_profile !== NO_WIND_PROFILE) {
     notes.push({
       text: `This profile fades the wind to nothing at ground level, and the ${frame.value} frame never leaves it.
         Set the profile to None for the wind to be felt.`,
-      warning: true,
+      severity: 'warning',
     })
   }
   if (model.value.windIs) {
-    notes.push({ text: model.value.windIs, warning: false })
+    notes.push({ text: model.value.windIs })
   }
   return notes
 })
 
-const waterNotes = computed<Note[]>(() => {
+const waterNotes = computed<BannerContent[]>(() => {
   const because = model.value.noWater
   if (!frameKnown.value || !because) {
     return []
@@ -135,7 +131,7 @@ const waterNotes = computed<Note[]>(() => {
     {
       text: `The ${frame.value} frame ignores waves and current — it ${because}. Switch to a motorboat or
         sailboat frame for them to move the vehicle.`,
-      warning: true,
+      severity: 'warning',
     },
   ]
 })
@@ -280,12 +276,9 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
         Wind
       </div>
       <div class="flex flex-col gap-3">
-        <BlueBanner
-          v-for="note in windNotes"
-          :key="note.text"
-          :text="note.text"
-          :severity="note.warning ? 'warning' : 'info'"
-          :expanded="false"
+        <BlueBannerGroup
+          v-if="windNotes.length > 0"
+          :banners="windNotes"
         />
         <BlueSlider
           v-model="environment.wind_speed"
@@ -375,12 +368,9 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
         Waves &amp; current
       </div>
       <div class="flex flex-col gap-3">
-        <BlueBanner
-          v-for="note in waterNotes"
-          :key="note.text"
-          :text="note.text"
-          :severity="note.warning ? 'warning' : 'info'"
-          :expanded="false"
+        <BlueBannerGroup
+          v-if="waterNotes.length > 0"
+          :banners="waterNotes"
         />
         <BlueSelect
           v-model="environment.wave_enable"
