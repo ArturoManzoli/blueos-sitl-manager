@@ -85,7 +85,10 @@ onMounted(async () => {
     </div>
 
     <div class="px-5 py-4">
-      <StatusPanel ref="statusPanel" />
+      <StatusPanel
+        ref="statusPanel"
+        class="my-3.5"
+      />
 
       <BlueExpansiblePanel
         title="Vehicle & frame"
