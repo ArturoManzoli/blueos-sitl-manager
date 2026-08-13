@@ -37,8 +37,7 @@ const OUTCOME_STYLE: Record<ParamOutcome, { label: string; color: string }> = {
 }
 
 // The step icons and the connectors between them share this height, which is what puts the
-// line on the icons' centre line. Applied inline: Vuetify's reset zeroes margins outside any
-// cascade layer, which beats Tailwind's layered spacing utilities.
+// line on the icons' centre line.
 const STEP_ICON_SIZE = 22
 
 const STEP_STYLE: Record<StepState, { icon: string; color: string }> = {

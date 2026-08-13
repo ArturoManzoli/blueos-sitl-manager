@@ -78,9 +78,9 @@ SEND_DELAY = 0.02
 
 # mavlink2rest keeps one PARAM_VALUE per vehicle, so any other client reading parameters —
 # Cockpit opening its parameter editor, BlueOS refreshing — overwrites the slot our read-back
-# is watching, and the answer we are waiting for is gone. Losing that race is what made a
-# spawn location that had been written correctly report itself as unwritten, so the reads that
-# have to be right wait several times longer than a quiet link needs.
+# is watching, and the answer we are waiting for is gone. A write that has to be confirmed
+# rather than merely attempted therefore waits several times longer than a quiet link needs,
+# so a value that did land is not reported as unwritten.
 NAMED_SET_VERIFY_TIMEOUT = 3.0
 
 

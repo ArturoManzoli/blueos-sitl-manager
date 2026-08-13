@@ -24,9 +24,9 @@
 
 /* The extension is embedded in a BlueOS iframe, and paints BlueOS's own backdrop behind its
    card rather than leaving the page transparent: an iframe whose document declares a dark
-   colour scheme gets an opaque black canvas painted under it, so what showed through was
-   never BlueOS's blue anyway. Stating the colour here also gives the card the same surround
-   when the page is opened on its own during development. */
+   colour scheme is given an opaque black canvas of its own, so nothing of the page behind it
+   shows through. Stating the colour here also gives the card the same surround when the page
+   is opened on its own during development. */
 html,
 body,
 #app {
