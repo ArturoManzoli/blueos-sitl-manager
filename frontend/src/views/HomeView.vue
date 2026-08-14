@@ -65,6 +65,7 @@ onMounted(async () => {
   <BlueApp
     title="SITL Manager"
     :logo="logo"
+    width="1100px"
   >
     <template #actions>
       <BlueButton

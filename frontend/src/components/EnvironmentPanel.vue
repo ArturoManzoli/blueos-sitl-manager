@@ -8,6 +8,7 @@ import {
   BlueButtonGroup,
   BlueSelect,
   BlueSlider,
+  BlueWindRose,
   useBlueSnackbar,
 } from '@bluerobotics/bluevue'
 
@@ -299,17 +300,13 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           :disabled="!windApplies"
           :format-display="metersPerSecond"
         />
-        <BlueSlider
+        <BlueWindRose
           v-model="environment.wind_direction"
           name="wind-direction"
           label="Direction"
           theme="dark"
-          width="380px"
-          :min="0"
-          :max="360"
-          :step="1"
+          width="240px"
           :disabled="!windApplies"
-          :format-display="degrees"
         />
         <BlueSlider
           v-model="environment.wind_elevation"
@@ -400,6 +397,14 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           :disabled="!waterApplies"
           :format-display="meters"
         />
+        <BlueWindRose
+          v-model="environment.wave_direction"
+          name="wave-direction"
+          label="Wave direction"
+          theme="dark"
+          width="240px"
+          :disabled="!waterApplies"
+        />
         <BlueSlider
           v-model="environment.tide_speed"
           name="current-speed"
@@ -412,17 +417,13 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           :disabled="!waterApplies"
           :format-display="metersPerSecond"
         />
-        <BlueSlider
+        <BlueWindRose
           v-model="environment.tide_direction"
           name="current-direction"
           label="Current direction"
           theme="dark"
-          width="380px"
-          :min="0"
-          :max="360"
-          :step="1"
+          width="240px"
           :disabled="!waterApplies"
-          :format-display="degrees"
         />
       </div>
     </div>

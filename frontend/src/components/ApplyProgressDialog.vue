@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BlueButton, BlueIcon, BlueJobDialog, BlueSpinner, useBlueSnackbar } from '@bluerobotics/bluevue'
+import { BlueButton, BlueIcon, BlueSpinner, BlueStepsDialog, useBlueSnackbar } from '@bluerobotics/bluevue'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
 import { VehicleApi } from '@/services/api'
@@ -139,7 +139,7 @@ onUnmounted(stopPolling)
 </script>
 
 <template>
-  <BlueJobDialog
+  <BlueStepsDialog
     v-if="job"
     :model-value="modelValue"
     :state="job.state === 'running' ? 'running' : job.state === 'failed' ? 'failed' : 'done'"
@@ -235,5 +235,5 @@ onUnmounted(stopPolling)
         </BlueButton>
       </div>
     </template>
-  </BlueJobDialog>
+  </BlueStepsDialog>
 </template>

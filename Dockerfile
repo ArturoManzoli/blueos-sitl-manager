@@ -56,15 +56,15 @@ LABEL permissions='{\
 
 LABEL authors='[\
   {\
-    "name": "BlueOS Community",\
-    "email": "support@example.com"\
+    "name": "Arturo Manzoli",\
+    "email": "arturomanzoli@gmail.com"\
   }\
 ]'
 
 LABEL company='{\
-  "about": "Community-maintained BlueOS extension for SITL development.",\
-  "name": "BlueOS Community",\
-  "email": "support@example.com"\
+  "about": "BlueOS extension for SITL vehicle type, ambient conditions, and spawn location.",\
+  "name": "Arturo Manzoli",\
+  "email": "arturomanzoli@gmail.com"\
 }'
 
 LABEL type="tool"
@@ -73,10 +73,10 @@ LABEL tags='[\
   "development",\
   "navigation"\
 ]'
-LABEL readme="https://raw.githubusercontent.com/BlueOS-Community/blueos-sitl-manager/{tag}/README.md"
+LABEL readme="https://raw.githubusercontent.com/ArturoManzoli/blueos-sitl-manager/{tag}/README.md"
 LABEL links='{\
-  "github": "https://github.com/BlueOS-Community/blueos-sitl-manager",\
-  "support": "https://github.com/BlueOS-Community/blueos-sitl-manager/issues"\
+  "github": "https://github.com/ArturoManzoli/blueos-sitl-manager",\
+  "support": "https://github.com/ArturoManzoli/blueos-sitl-manager/issues"\
 }'
 LABEL requirements="core >= 1.1"
 

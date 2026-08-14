@@ -9,6 +9,7 @@ import {
   BlueMenu,
   type BlueMenuItem,
   BluePromptDialog,
+  BlueWindRose,
   useBlueLoading,
   useBlueSnackbar,
 } from '@bluerobotics/bluevue'
@@ -417,17 +418,12 @@ async function applyLocation(): Promise<void> {
         :step="1"
         info-tooltip="Height above mean sea level the vehicle spawns at, written to SIM_OPOS_ALT."
       />
-      <BlueInput
+      <BlueWindRose
         v-model="location.heading"
         name="heading"
         label="Heading"
-        type="number"
         theme="dark"
         width="240px"
-        suffix="°"
-        :min="0"
-        :max="360"
-        :step="1"
         info-tooltip="Direction the vehicle faces when it spawns, clockwise from north."
       />
     </div>
