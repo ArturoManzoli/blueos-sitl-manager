@@ -9,7 +9,12 @@ configure their simulated vehicle: vehicle type and frame, ambient conditions (w
 waves, current, simulation speed) and spawn location — without juggling the Autopilot
 Firmware page, the Parameter Editor and MAVProxy.
 
-> Status: early scaffold (v0.1.0). Built for development workflows with BlueOS + Cockpit.
+> v0.2.0. Built for development workflows with BlueOS + Cockpit.
+
+## Requirements
+
+- **BlueOS core >= 1.1** — vehicle presets and ambient conditions.
+- **BlueOS 1.5.0-beta.39+** for spawn location ([BlueOS#3986](https://github.com/bluerobotics/BlueOS/pull/3986)).
 
 ## What it does
 
@@ -196,7 +201,7 @@ copied between vehicles by hand as well as through import and export.
 ## Architecture
 
 ```
-Vue 3 + Vuetify 3 frontend  ──>  FastAPI backend  ──>  host.docker.internal
+Vue 3 + BlueVue frontend  ──>  FastAPI backend  ──>  host.docker.internal
                                                         ├── /mavlink2rest      (params, position)
                                                         └── /ardupilot-manager (frame, firmware, restart)
 ```

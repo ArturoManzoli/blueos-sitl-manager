@@ -31,7 +31,7 @@ EXPOSE 80
 ENV SITL_CUSTOM_PRESETS_DIR=/app/persistent/custom_presets
 ENV SITL_CUSTOM_LOCATIONS_DIR=/app/persistent/custom_locations
 
-LABEL version="0.1.0"
+LABEL version="0.2.0"
 
 # Map container port 80 to a free host port and bridge to the vehicle network so the
 # extension can reach BlueOS services via host.docker.internal. The Binds entry persists

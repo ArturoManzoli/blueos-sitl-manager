@@ -37,10 +37,10 @@ def register_service() -> Dict[str, Any]:
         "name": "SITL Manager",
         "description": "Manage SITL vehicle type, ambient conditions (wind, waves, current) and spawn location.",
         "icon": "mdi-test-tube",
-        "company": "BlueOS Community",
+        "company": "Arturo Manzoli",
         "version": __version__,
         "new_page": False,
-        "webpage": "https://github.com/BlueOS-Community/blueos-sitl-manager",
+        "webpage": "https://github.com/ArturoManzoli/blueos-sitl-manager",
         "api": "/docs",
         "works_in_relative_paths": True,
     }
