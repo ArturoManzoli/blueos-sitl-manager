@@ -29,9 +29,9 @@ environment_router = APIRouter(
 async def _apply(environment: Environment) -> AppliedParams:
     """Write the ambient parameters the request names, confirming each one.
 
-    These used to be fired off as a burst of unacknowledged PARAM_SETs, which meant a preset
-    could land in part — a simulator left with waves enabled but no wind, reported as a
-    success. Each value is now read back and written again if it did not take.
+    A PARAM_SET is unacknowledged, so without a read-back a preset can land in part — a
+    simulator left with waves enabled but no wind — and still be reported as a success. Each
+    value is read back, and written again if it did not take.
     """
     params = {
         param_name: float(getattr(environment, field))

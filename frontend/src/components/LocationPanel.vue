@@ -1,18 +1,28 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
-import BlueInput from '@/components/BlueInput.vue'
+import {
+  BlueButton,
+  BlueButtonGroup,
+  BlueIcon,
+  BlueInput,
+  BlueMenu,
+  type BlueMenuItem,
+  BluePromptDialog,
+  BlueWindRose,
+  useBlueLoading,
+  useBlueSnackbar,
+} from '@bluerobotics/bluevue'
+
 import MapPicker from '@/components/MapPicker.vue'
-import NamePromptDialog from '@/components/NamePromptDialog.vue'
-import PresetMenu, { type PresetMenuItem } from '@/components/PresetMenu.vue'
-import { hideLoading, showLoading } from '@/composables/loading'
-import { notify, notifyError } from '@/composables/notify'
 import { isSitl } from '@/composables/vehicleStatus'
 import { LocationApi, MAX_PRESETS } from '@/services/api'
 import type { LocationPreset, SitlLocation } from '@/types/sitl'
 
 const emit = defineEmits<{ (event: 'changed'): void }>()
+
+const { notify, notifyError } = useBlueSnackbar()
+const { showLoading, hideLoading } = useBlueLoading()
 
 const location = ref<SitlLocation>({ latitude: -27.563, longitude: -48.459, altitude: 0, heading: 270 })
 // Where the vehicle was last read to spawn, which is what the form is measured against to
@@ -33,26 +43,38 @@ const contextPreset = ref<LocationPreset | null>(null)
 const contextTarget = ref<[number, number]>([0, 0])
 const contextMenuOpen = ref(false)
 
-// Close enough that the same spot typed by hand or picked off the map still counts, without
-// two distinct presets ever matching at once.
+// Close enough that the same spot typed by hand or picked off the map still counts.
 function isSameSpot(a: SitlLocation, b: SitlLocation): boolean {
   return Math.abs(a.latitude - b.latitude) < 1e-5 && Math.abs(a.longitude - b.longitude) < 1e-5
 }
 
-// Which preset the coordinates in the form currently sit on, empty when they sit on none.
-// Doubles as the button group's key, so the highlight follows coordinates that were typed or
-// picked off the map rather than only ones that arrived by clicking a preset.
-const matchedPresetName = computed(
-  () => presets.value.find((preset) => isSameSpot(preset.location, location.value))?.name ?? ''
-)
+// The preset last picked or created, which settles the highlight while the coordinates still
+// sit on it. Renaming a built-in leaves a copy on the same spot as its source, so the spot
+// alone no longer names one preset, and the row would light up whichever comes first.
+const chosenPresetName = ref('')
+
+// Which preset the coordinates in the form sit on, empty when they sit on none. Doubles as the
+// button group's key, so the highlight follows coordinates that were typed or picked off the
+// map rather than only ones that arrived by clicking a preset.
+const matchedPresetName = computed(() => {
+  const chosen = presets.value.find((preset) => preset.name === chosenPresetName.value)
+  if (chosen && isSameSpot(chosen.location, location.value)) {
+    return chosen.name
+  }
+  return presets.value.find((preset) => isSameSpot(preset.location, location.value))?.name ?? ''
+})
+
+// Fills the form from a preset, which is all selecting one means here.
+function selectPreset(preset: LocationPreset): void {
+  location.value = { ...preset.location }
+  chosenPresetName.value = preset.name
+}
 
 const presetButtons = computed(() =>
   presets.value.map((preset) => ({
     name: preset.name,
     preSelected: preset.name === matchedPresetName.value,
-    onSelected: () => {
-      location.value = { ...preset.location }
-    },
+    onSelected: () => selectPreset(preset),
   })),
 )
 
@@ -60,7 +82,7 @@ const presetsFull = computed(() => presets.value.length >= MAX_PRESETS)
 const fullHint = computed(() => (presetsFull.value ? `The row holds ${MAX_PRESETS} presets; delete one first` : undefined))
 
 // The three-dots menu, which acts on the coordinates in the form rather than on any preset.
-const presetActions = computed<PresetMenuItem[]>(() => [
+const presetActions = computed<BlueMenuItem[]>(() => [
   {
     title: 'Save current location as preset',
     icon: 'mdi-content-save-outline',
@@ -80,19 +102,13 @@ const presetActions = computed<PresetMenuItem[]>(() => [
 
 // What a long press offers for one preset, matching the vehicle presets: a built-in can be
 // edited, renamed (as a copy) and exported, but only ever reverted, never deleted.
-const contextItems = computed<PresetMenuItem[]>(() => {
+const contextItems = computed<BlueMenuItem[]>(() => {
   const preset = contextPreset.value
   if (!preset) {
     return []
   }
-  const items: PresetMenuItem[] = [
-    {
-      title: 'Reload profile',
-      icon: 'mdi-refresh',
-      action: () => {
-        location.value = { ...preset.location }
-      },
-    },
+  const items: BlueMenuItem[] = [
+    { title: 'Reload profile', icon: 'mdi-refresh', action: () => selectPreset(preset) },
     {
       title: 'Save current coordinates here',
       icon: 'mdi-content-save-outline',
@@ -146,7 +162,7 @@ async function fetchFromVehicle(): Promise<void> {
   fetching.value = true
   try {
     if (await refresh()) {
-      notify('Read the spawn location back from the vehicle.', 'info')
+      notify('Read the spawn location back from the vehicle.', { severity: 'info' })
     }
   } finally {
     fetching.value = false
@@ -168,7 +184,7 @@ defineExpose({ reload })
 
 function useBrowserLocation(): void {
   if (!navigator.geolocation) {
-    notify('Geolocation is not available in this browser.', 'warning')
+    notify('Geolocation is not available in this browser.', { severity: 'warning' })
     return
   }
   navigator.geolocation.getCurrentPosition(
@@ -178,9 +194,9 @@ function useBrowserLocation(): void {
         latitude: Number(position.coords.latitude.toFixed(6)),
         longitude: Number(position.coords.longitude.toFixed(6)),
       }
-      notify('Filled coordinates from your browser location.', 'info')
+      notify('Filled coordinates from your browser location.', { severity: 'info' })
     },
-    (error) => notify(`Could not get browser location: ${error.message}`, 'warning'),
+    (error) => notify(`Could not get browser location: ${error.message}`, { severity: 'warning' }),
   )
 }
 
@@ -201,7 +217,10 @@ async function savePreset(name: string): Promise<void> {
   try {
     const saved = await LocationApi.savePreset({ name, location: { ...location.value } })
     await loadPresets()
-    notify(`Saved location preset "${saved.name}".`, 'success')
+    // Saved from the coordinates on screen, which another preset may already hold, so the row
+    // is told which name to light up rather than left to work it out from the spot.
+    chosenPresetName.value = saved.name
+    notify(`Saved location preset "${saved.name}".`, { severity: 'success' })
   } catch (error) {
     notifyError(error, 'Could not save the location preset')
   } finally {
@@ -216,13 +235,20 @@ async function confirmRenamePreset(newName: string): Promise<void> {
   }
   showLoading(`Renaming "${preset.name}"…`)
   try {
-    await LocationApi.renamePreset(preset.name, newName)
+    const renamed = await LocationApi.renamePreset(preset.name, newName)
     await loadPresets()
+    if (preset.builtin) {
+      // A built-in is renamed by copying it, so the row gains an entry on a spot that already
+      // had one and nothing would look to have happened. Moving onto it is what shows it.
+      selectPreset(renamed)
+    } else if (chosenPresetName.value === preset.name) {
+      chosenPresetName.value = newName
+    }
     notify(
       preset.builtin
         ? `Copied "${preset.name}" to "${newName}"; the built-in stays in place.`
         : `Renamed "${preset.name}" to "${newName}".`,
-      'success'
+      { severity: 'success' }
     )
   } catch (error) {
     notifyError(error, `Could not rename ${preset.name}`)
@@ -236,7 +262,7 @@ async function removePreset(preset: LocationPreset): Promise<void> {
   try {
     const result = await LocationApi.deletePreset(preset.name)
     await loadPresets()
-    notify(result.detail, 'success')
+    notify(result.detail, { severity: 'success' })
   } catch (error) {
     notifyError(error, `Could not delete ${preset.name}`)
   } finally {
@@ -271,7 +297,11 @@ async function onImportFileSelected(event: Event): Promise<void> {
     const preset = JSON.parse(await file.text()) as LocationPreset
     const saved = await LocationApi.savePreset({ name: preset.name, location: preset.location })
     await loadPresets()
-    notify(`Imported location preset "${saved.name}".`, 'success')
+    // Moving onto what arrived is what shows it: the row would otherwise light up whichever
+    // preset already sat on those coordinates, and an import onto a taken spot would read as
+    // having done nothing.
+    selectPreset(saved)
+    notify(`Imported location preset "${saved.name}".`, { severity: 'success' })
   } catch (error) {
     notifyError(error, 'Could not import the location preset')
   } finally {
@@ -285,7 +315,7 @@ async function applyLocation(): Promise<void> {
   let applied = false
   try {
     const result = await LocationApi.set(location.value)
-    notify(result.detail, result.success ? 'success' : 'warning')
+    notify(result.detail, { severity: result.success ? 'success' : 'warning' })
     applied = true
   } catch (error) {
     notifyError(error, 'Could not set the spawn location')
@@ -317,7 +347,7 @@ async function applyLocation(): Promise<void> {
           @context-menu="onPresetContextMenu"
         />
       </div>
-      <PresetMenu
+      <BlueMenu
         v-model="presetMenuOpen"
         :items="presetActions"
       >
@@ -328,11 +358,11 @@ async function applyLocation(): Promise<void> {
             :class="busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"
             title="Preset actions"
           >
-            <v-icon>mdi-dots-vertical</v-icon>
+            <BlueIcon name="mdi-dots-vertical" />
           </button>
         </template>
-      </PresetMenu>
-      <PresetMenu
+      </BlueMenu>
+      <BlueMenu
         v-model="contextMenuOpen"
         :items="contextItems"
         :target="contextTarget"
@@ -388,56 +418,54 @@ async function applyLocation(): Promise<void> {
         :step="1"
         info-tooltip="Height above mean sea level the vehicle spawns at, written to SIM_OPOS_ALT."
       />
-      <BlueInput
+      <BlueWindRose
         v-model="location.heading"
         name="heading"
         label="Heading"
-        type="number"
         theme="dark"
         width="240px"
-        suffix="°"
-        :min="0"
-        :max="360"
-        :step="1"
         info-tooltip="Direction the vehicle faces when it spawns, clockwise from north."
       />
     </div>
 
     <div class="flex items-center justify-between gap-2">
       <div class="flex items-center gap-2">
-        <v-btn
-          size="small"
-          prepend-icon="mdi-crosshairs-gps"
+        <BlueButton
+          density="compact"
+          theme="dark"
+          icon="mdi-crosshairs-gps"
           :disabled="busy || fetching"
           @click="useBrowserLocation"
         >
           Use my location
-        </v-btn>
-        <v-btn
+        </BlueButton>
+        <BlueButton
           class="ml-2"
-          size="small"
-          prepend-icon="mdi-refresh"
+          density="compact"
+          theme="dark"
+          icon="mdi-refresh"
           :loading="fetching"
           :disabled="busy"
           @click="fetchFromVehicle"
         >
           Fetch from vehicle
-        </v-btn>
+        </BlueButton>
       </div>
       <!-- Only the write waits for the simulator: picking, saving and exporting coordinates
            is the same work on any board. -->
-      <v-btn
-        color="primary"
-        size="small"
+      <BlueButton
+        variant="filled"
+        density="compact"
+        theme="dark"
         :loading="busy"
         :disabled="!isSitl || !pendingChange || fetching"
         @click="applyLocation"
       >
         Apply and restart
-      </v-btn>
+      </BlueButton>
     </div>
 
-    <NamePromptDialog
+    <BluePromptDialog
       v-model="saveDialogOpen"
       icon="mdi-map-marker-plus-outline"
       title="Save current location"
@@ -447,7 +475,7 @@ async function applyLocation(): Promise<void> {
       @confirm="savePreset"
     />
 
-    <NamePromptDialog
+    <BluePromptDialog
       v-model="renameDialogOpen"
       icon="mdi-rename-box-outline"
       title="Rename preset"

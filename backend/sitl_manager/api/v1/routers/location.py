@@ -1,6 +1,6 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi_versioning import versioned_api_route
 from loguru import logger
 
@@ -41,14 +41,16 @@ VALID_RANGE_BY_FIELD: Dict[str, Tuple[float, float]] = {
     "heading": (0.0, 360.0),
 }
 
+# Each spawn parameter is read on its own against the one PARAM_VALUE slot mavlink2rest keeps,
+# and the read that matters most runs just after the autopilot has restarted, so a few tries
+# apiece is what separates a parameter with nothing to say from one that was not heard.
+SPAWN_READ_TIMEOUT = 1.0
+SPAWN_READ_ATTEMPTS = 3
 
-# Falls back to the BlueOS default per field, so an unreadable or out-of-range parameter
-# yields a sane form value instead of failing the whole read.
-def _coerce(field: str, value: Optional[float]) -> float:
+
+def _is_usable(field: str, value: float) -> bool:
     low_high = VALID_RANGE_BY_FIELD.get(field)
-    if value is None or (low_high and not low_high[0] <= value <= low_high[1]):
-        return DEFAULT_SPAWN_BY_FIELD[field]
-    return value
+    return low_high is None or low_high[0] <= value <= low_high[1]
 
 
 @location_router.get("/presets", response_model=List[LocationPreset], summary="List location presets.")
@@ -102,12 +104,37 @@ async def delete_preset(name: str) -> OperationResult:
 @location_router.get("", response_model=Location, summary="Read the configured SITL spawn location.")
 @to_http_exception
 async def get_location() -> Location:
+    """Read where the vehicle is set to spawn from its SIM_OPOS_* parameters.
+
+    A parameter that goes unanswered, or answers with a number that is not a place — which is
+    how a vehicle change leaves them, the autopilot having read the old EEPROM as the new
+    vehicle's — fails the whole read rather than standing the BlueOS default in for it: a
+    default returned as though it had been read puts the panel's pin somewhere the vehicle is
+    not, and then offers to write it back as if the user had chosen it.
+    """
     # A real board has no SIM_OPOS_*, so each read would sit out its full timeout before
     # falling back to the same defaults this returns straight away.
     if not autopilot.is_sitl(await autopilot.get_board()):
         return Location(**DEFAULT_SPAWN_BY_FIELD)
-    values = {field: await mavlink.get_param(param) for field, param in LOCATION_PARAM_MAP.items()}
-    return Location(**{field: _coerce(field, value) for field, value in values.items()})
+
+    values: Dict[str, float] = {}
+    unreadable: List[str] = []
+    for field, param in LOCATION_PARAM_MAP.items():
+        value = await mavlink.get_param(param, timeout=SPAWN_READ_TIMEOUT, attempts=SPAWN_READ_ATTEMPTS)
+        if value is None or not _is_usable(field, value):
+            unreadable.append(param)
+        else:
+            values[field] = value
+
+    if unreadable:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"The autopilot has no usable value for {', '.join(unreadable)}, so where it "
+                "spawns could not be read. The coordinates on screen are left as they were."
+            ),
+        )
+    return Location(**values)
 
 
 @location_router.post("", response_model=OperationResult, summary="Set the SITL spawn location and restart.")

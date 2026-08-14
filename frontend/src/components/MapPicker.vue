@@ -106,7 +106,7 @@ onBeforeUnmount(() => {
   height: 0;
   border-left: 9px solid transparent;
   border-right: 9px solid transparent;
-  border-bottom: 22px solid rgb(var(--v-theme-primary));
+  border-bottom: 22px solid var(--bluevue-primary);
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
   transform-origin: center;
 }

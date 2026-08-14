@@ -1,19 +1,27 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 
+import {
+  BlueButton,
+  BlueButtonGroup,
+  BlueIcon,
+  BlueMenu,
+  type BlueMenuItem,
+  BluePromptDialog,
+  BlueSelect,
+  useBlueLoading,
+  useBlueSnackbar,
+} from '@bluerobotics/bluevue'
+
 import ApplyProgressDialog from '@/components/ApplyProgressDialog.vue'
-import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
-import BlueSelect from '@/components/BlueSelect.vue'
-import NamePromptDialog from '@/components/NamePromptDialog.vue'
-import PresetMenu, { type PresetMenuItem } from '@/components/PresetMenu.vue'
-import { hideLoading, showLoading } from '@/composables/loading'
-import { notify, notifyError } from '@/composables/notify'
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
-import { withWaitCursor } from '@/composables/waitCursor'
 import { MAX_PRESETS, VehicleApi } from '@/services/api'
 import type { ApplyJob, VehiclePreset, VehicleType } from '@/types/sitl'
 
 const emit = defineEmits<{ (event: 'changed'): void }>()
+
+const { notify, notifyError } = useBlueSnackbar()
+const { showLoading, hideLoading } = useBlueLoading()
 
 const CUSTOM_PRESET = 'Custom'
 
@@ -128,7 +136,7 @@ const saveDisabled = computed(() => presetsFull.value || !isSitl.value || pendin
 const saveHint = computed(() => fullHint.value ?? sitlHint.value ?? pendingHint.value)
 
 // The three-dots menu, which acts on the vehicle rather than on any one preset.
-const presetActions = computed<PresetMenuItem[]>(() => [
+const presetActions = computed<BlueMenuItem[]>(() => [
   {
     title: 'Save current config as preset',
     icon: 'mdi-content-save-outline',
@@ -155,7 +163,7 @@ const presetActions = computed<PresetMenuItem[]>(() => [
 // What a long press offers on the Custom entry. Both roads lead to the same dialog: naming
 // the configuration is what turns it into a preset, and doing so hands Custom back empty for
 // the next experiment.
-const customItems = computed<PresetMenuItem[]>(() => [
+const customItems = computed<BlueMenuItem[]>(() => [
   {
     title: 'Save as preset…',
     icon: 'mdi-content-save-outline',
@@ -175,12 +183,12 @@ const customItems = computed<PresetMenuItem[]>(() => [
 // What a long press offers for one preset. A built-in can be reloaded, edited, renamed (as a
 // copy) and exported, but never deleted: an edited one is reverted to its shipped definition
 // instead, which is what keeps the curated presets impossible to lose.
-const contextItems = computed<PresetMenuItem[]>(() => {
+const contextItems = computed<BlueMenuItem[]>(() => {
   const preset = contextPreset.value
   if (!preset) {
     return contextCustom.value ? customItems.value : []
   }
-  const items: PresetMenuItem[] = [
+  const items: BlueMenuItem[] = [
     {
       // The one place a preset is written to the vehicle without going through Apply: it
       // asks for the preset the vehicle is already on to be laid down again, which the
@@ -297,13 +305,12 @@ async function reload(): Promise<void> {
 
 defineExpose({ reload })
 
-// Every configuration change runs as a backend job; start it, then hand the first
-// snapshot to the progress dialog, which polls the rest. Starting one takes long enough to
-// notice, and nothing has appeared yet at that point, so the pointer carries the wait.
+// Every configuration change runs as a backend job; start it, then hand the first snapshot to
+// the progress dialog, which polls the rest. The Apply button spins for the wait in between.
 async function startJob(start: () => Promise<ApplyJob>, failureMessage: string): Promise<boolean> {
   busy.value = true
   try {
-    progressJob.value = await withWaitCursor(start)
+    progressJob.value = await start()
     progressOpen.value = true
     return true
   } catch (error) {
@@ -352,7 +359,7 @@ function onJobFinished(job: ApplyJob): void {
   if (job.state !== 'succeeded') {
     userChoice.value = null
   }
-  notify(job.detail, job.state === 'succeeded' ? 'success' : 'warning')
+  notify(job.detail, { severity: job.state === 'succeeded' ? 'success' : 'warning' })
 }
 
 watch(progressOpen, (open) => {
@@ -414,7 +421,7 @@ async function confirmSavePreset(name: string, description: string): Promise<voi
     userChoice.value = preset.name
     appliedPresetName.value = preset.name
     selectedPresetName.value = preset.name
-    notify(`Saved preset "${preset.name}" with ${Object.keys(preset.parameters).length} parameters.`, 'success')
+    notify(`Saved preset "${preset.name}" with ${Object.keys(preset.parameters).length} parameters.`, { severity: 'success' })
   } catch (error) {
     notifyError(error, 'Could not save preset')
   } finally {
@@ -461,7 +468,7 @@ async function overwritePreset(preset: VehiclePreset): Promise<void> {
   try {
     const saved = await VehicleApi.savePreset(preset.name, preset.description)
     await loadPresets()
-    notify(`Updated "${saved.name}" with the current configuration.`, 'success')
+    notify(`Updated "${saved.name}" with the current configuration.`, { severity: 'success' })
   } catch (error) {
     notifyError(error, `Could not update ${preset.name}`)
   } finally {
@@ -487,7 +494,7 @@ async function confirmRenamePreset(newName: string): Promise<void> {
       preset.builtin
         ? `Copied "${preset.name}" to "${newName}"; the built-in stays in place.`
         : `Renamed "${preset.name}" to "${newName}".`,
-      'success'
+      { severity: 'success' }
     )
   } catch (error) {
     notifyError(error, `Could not rename ${preset.name}`)
@@ -508,7 +515,7 @@ async function removePreset(preset: VehiclePreset): Promise<void> {
     await loadPresets()
     await loadActivePreset()
     await showApplied()
-    notify(result.detail, 'success')
+    notify(result.detail, { severity: 'success' })
   } catch (error) {
     notifyError(error, `Could not delete ${preset.name}`)
   } finally {
@@ -529,7 +536,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
     const saved = await VehicleApi.importPreset(preset)
     await loadPresets()
     await loadActivePreset()
-    notify(`Imported preset "${saved.name}".`, 'success')
+    notify(`Imported preset "${saved.name}".`, { severity: 'success' })
   } catch (error) {
     notifyError(error, 'Could not import preset')
   } finally {
@@ -554,7 +561,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
           @context-menu="onPresetContextMenu"
         />
       </div>
-      <PresetMenu
+      <BlueMenu
         v-model="presetMenuOpen"
         :items="presetActions"
       >
@@ -565,11 +572,11 @@ async function onImportFileSelected(event: Event): Promise<void> {
             :class="busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"
             title="Preset actions"
           >
-            <v-icon>mdi-dots-vertical</v-icon>
+            <BlueIcon name="mdi-dots-vertical" />
           </button>
         </template>
-      </PresetMenu>
-      <PresetMenu
+      </BlueMenu>
+      <BlueMenu
         v-model="contextMenuOpen"
         :items="contextItems"
         :target="contextTarget"
@@ -603,15 +610,16 @@ async function onImportFileSelected(event: Event): Promise<void> {
     />
 
     <div class="flex items-center justify-end gap-2">
-      <v-btn
-        color="primary"
-        size="small"
+      <BlueButton
+        variant="filled"
+        density="compact"
+        theme="dark"
         :loading="busy"
         :disabled="locked || !pendingChange"
         @click="applySelection"
       >
         Apply and restart
-      </v-btn>
+      </BlueButton>
     </div>
 
     <ApplyProgressDialog
@@ -621,7 +629,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
       @restarted="onJobRestarted"
     />
 
-    <NamePromptDialog
+    <BluePromptDialog
       v-model="renameDialogOpen"
       icon="mdi-rename-box-outline"
       title="Rename preset"
@@ -636,7 +644,7 @@ async function onImportFileSelected(event: Event): Promise<void> {
       @confirm="confirmRenamePreset"
     />
 
-    <NamePromptDialog
+    <BluePromptDialog
       v-model="saveDialogOpen"
       icon="mdi-content-save-outline"
       title="Save current configuration"

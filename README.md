@@ -132,7 +132,8 @@ Wind is just as particular, because the frame picks the simulation model:
 - Everything else flies, and takes wind but no water.
 
 Every slider stays in place whatever the frame; the ones the running model would ignore are
-greyed out with a line saying why, rather than left as silent dead controls.
+greyed out rather than left as silent dead controls, and a badge above them opens into the
+reason when it is clicked.
 
 One catch applies to everything that stays at or below the surface: `SIM_WIND_T` defaults to a
 square-law profile that scales wind by height above ground, which leaves none of it where a
@@ -141,10 +142,10 @@ pin it to *None* so a preset that promises wind delivers it, and the panel warns
 is set that would scale the wind away on a frame that never climbs.
 
 Wave mode picks how much of the motion is simulated: roll and pitch only, or those plus
-heave (the vertical rise and fall). Both direction sliders, wind and current, say where the
-flow *comes from*, matching ArduPilot's own convention. Vertical angle tilts the wind out of
-the horizontal (90° is a pure updraft), and variation time is how long a change of wind takes
-to arrive.
+heave (the vertical rise and fall). Wind, wave and current each have a compass rose that
+says where the flow *comes from*, matching ArduPilot's own convention. Vertical angle tilts
+the wind out of the horizontal (90° is a pure updraft), and variation time is how long a
+change of wind takes to arrive.
 
 ## Spawn location
 

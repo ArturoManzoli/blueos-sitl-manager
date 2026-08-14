@@ -260,7 +260,7 @@ DEFAULT_SPAWN_BY_FIELD: Dict[str, float] = {
 
 LOCATION_PRESETS: List[LocationPreset] = [
     LocationPreset(
-        name="Florianópolis (BlueOS default)",
+        name="Florianópolis",
         location=Location(
             latitude=DEFAULT_HOME_LATITUDE,
             longitude=DEFAULT_HOME_LONGITUDE,
@@ -269,15 +269,15 @@ LOCATION_PRESETS: List[LocationPreset] = [
         ),
     ),
     LocationPreset(
-        name="AltaSea (Port of Los Angeles)",
+        name="AltaSea",
         location=Location(latitude=33.719589, longitude=-118.273179, heading=0),
     ),
     LocationPreset(
-        name="Kawaihae (Hawaii)",
+        name="Kawaihae",
         location=Location(latitude=20.027301, longitude=-155.830262, heading=0),
     ),
     LocationPreset(
-        name="Zandvoort (Netherlands)",
+        name="Zandvoort",
         location=Location(latitude=52.391492, longitude=4.523203, heading=0),
     ),
 ]

@@ -1,146 +1,27 @@
 @import "tailwindcss";
+/* The controls' design tokens and shared surfaces. Only these come from the package: this app
+   compiles Tailwind itself, so pulling in the ready-made stylesheet would ship a second copy
+   of the utilities it already has. */
+@import "@bluerobotics/bluevue/bluevue.css";
 
-/* ==========================================================================================
-   BlueVue: what the Blue* controls need to render, stated without reference to Vuetify so
-   this block can move out to the published package as-is.
-   ========================================================================================== */
+/* Tailwind does not scan node_modules unless it is told to, and the utilities the published
+   controls are built from live nowhere else. */
+@source "../../node_modules/@bluerobotics/bluevue/dist";
 
+/* The two tokens this extension restates. Everything else the package ships is taken as it
+   comes; these two describe a blue chosen against the backdrop painted below, so a slider
+   pill or a selected segment sits on it without disappearing into it. */
 :root {
-  /* The blue every control is picked out in: a shade under the backdrop this extension paints
-     below, so a slider pill or a selected segment sits on it without disappearing into it. */
   --bluevue-primary: #0A4B6B;
-  --bluevue-error: #CF6679;
-  --bluevue-surface: #363636;
   /* Focus ring: the primary again, lifted until it reads against a dark inset. */
   --bluevue-accent: #3FA3CC;
-  --bluevue-panel-bg: rgba(30, 30, 30, 0.96);
-  --bluevue-hairline: rgba(255, 255, 255, 0.08);
-  /* Material's three-part shadow, at the two depths the controls use: a resting control, and
-     one raised above its neighbours (a selected segment, an open menu). */
-  --bluevue-elevation-1: 0 2px 1px -1px #0003, 0 1px 1px 0 #00000024, 0 1px 3px 0 #0000001f;
-  --bluevue-elevation-5: 0 3px 5px -1px #0003, 0 5px 8px 0 #00000024, 0 1px 14px 0 #0000001f;
-  /* The opposite of an elevation: a well cut into the surface, for somewhere a value is typed
-     rather than somewhere that is pressed. The light line along the bottom edge is what sells
-     the depth, by reading as the lit far wall of the recess. */
-  --bluevue-inset-1: inset 0 1px 2px #00000056, inset 0 0.5px 0.5px #0000003a, inset 0 -0.5px 0 #ffffff0b;
 }
 
-.bluevue-elevation-1 {
-  box-shadow: var(--bluevue-elevation-1);
-}
-
-.bluevue-elevation-5 {
-  box-shadow: var(--bluevue-elevation-5);
-}
-
-.bluevue-inset-1 {
-  box-shadow: var(--bluevue-inset-1);
-}
-
-/* The surface every dialog and menu is built on: a frosted near-black card with a hairline
-   edge. Stated once so the progress dialog, the loading overlay and the preset prompts are
-   the same object rather than three approximations of it. */
-.bluevue-panel {
-  background-color: var(--bluevue-panel-bg);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid var(--bluevue-hairline);
-  box-shadow: 0 4px 4px rgba(0, 0, 0, 0.2), 0 8px 12px 6px rgba(0, 0, 0, 0.15);
-}
-
-/* A modal <dialog> carries the browser's own centring, borders and padding. Strip them so the
-   panel inside is the whole of what shows, and dim the page behind it. */
-.bluevue-dialog {
-  margin: auto;
-  border: none;
-  padding: 0;
-  background: transparent;
-  max-width: min(92vw, 624px);
-  max-height: 92vh;
-  overflow: visible;
-}
-
-/* showModal() moves focus into the dialog, and with nothing focusable inside it the dialog
-   itself takes it and the browser rings the whole panel. The ring belongs on controls, not on
-   the surface holding them, and the controls inside keep their own. */
-.bluevue-dialog:focus,
-.bluevue-dialog:focus-visible,
-.bluevue-popover:focus,
-.bluevue-popover:focus-visible {
-  outline: none;
-}
-
-.bluevue-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.88);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-/* A popover is promoted to the top layer, so it needs no z-index and is not clipped by the
-   panel it opens from. Only the browser's default centring and chrome have to go, since
-   floating-ui writes the real position. */
-.bluevue-popover {
-  position: fixed;
-  margin: 0;
-  border: none;
-  padding: 0;
-  background: transparent;
-  overflow: visible;
-}
-
-/* ==========================================================================================
-   SITL Manager: styles belonging to this extension, including the Vuetify surfaces it still
-   uses outside the Blue* controls.
-   ========================================================================================== */
-
-/* The extension is embedded in a BlueOS iframe, and paints BlueOS's own backdrop behind its
-   card rather than leaving the page transparent: an iframe whose document declares a dark
-   colour scheme gets an opaque black canvas painted under it, so what showed through was
-   never BlueOS's blue anyway. Stating the colour here also gives the card the same surround
-   when the page is opened on its own during development. */
+/* The page itself is BlueApp's, which paints the backdrop the card sits on; these two only make
+   sure the document it is mounted in fills the iframe it is served in. */
 html,
 body,
 #app {
   margin: 0;
   min-height: 100%;
-  background: #0C577B;
-}
-
-/* Set while a click is waiting on a request that has yet to show anything (see waitCursor).
-   The descendant rule and the !important are both load-bearing: without them the button that
-   was just clicked keeps its own pointer, which is exactly where the cursor is. */
-html.sitl-waiting,
-html.sitl-waiting * {
-  cursor: wait !important;
-}
-
-/* A button with no colour of its own is a secondary action, and reads like the selects and
-   button groups next to it: a barely-there translucent fill rather than Vuetify's opaque
-   surface. Colour classes (bg-primary and friends) opt out. */
-.v-btn--variant-elevated:not(.v-btn--disabled):not([class*="bg-"]) {
-  background-color: #ffffff11;
-}
-
-/* Disabled buttons read as a flat grey chip: a half-transparent grey that lets the panel
-   through, a light grey label on top of it, and faint enough to be plainly out of reach next
-   to their enabled siblings. */
-.v-btn.v-btn--disabled {
-  opacity: 0.3 !important;
-  background-color: #9e9e9e80 !important;
-  color: #afafaf !important;
-}
-
-.v-btn.v-btn--disabled .v-btn__overlay {
-  opacity: 0 !important;
-}
-
-/* Dialog/menu backdrop: Vuetify's default scrim is too light here and barely dims the
-   page behind a modal. Force a near-black, frosted scrim so the content underneath
-   recedes. opacity must stay at 1 for backdrop-filter to apply, so the dimming lives in
-   the rgba background instead. */
-.v-overlay__scrim {
-  background: rgba(0, 0, 0, 0.88) !important;
-  opacity: 1 !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
 }

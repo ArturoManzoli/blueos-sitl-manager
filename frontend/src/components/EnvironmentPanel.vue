@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import BlueButtonGroup from '@/components/BlueButtonGroup.vue'
-import BlueSelect from '@/components/BlueSelect.vue'
-import BlueSlider from '@/components/BlueSlider.vue'
-import { notify, notifyError } from '@/composables/notify'
+import {
+  type BannerContent,
+  BlueBannerGroup,
+  BlueButton,
+  BlueButtonGroup,
+  BlueSelect,
+  BlueSlider,
+  BlueWindRose,
+  useBlueSnackbar,
+} from '@bluerobotics/bluevue'
+
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
 import { EnvironmentApi } from '@/services/api'
 import type { AppliedParams, Environment, EnvironmentPreset } from '@/types/sitl'
+
+const { notify, notifyError } = useBlueSnackbar()
 
 // Form state keeps every field as a concrete number so it binds cleanly to sliders.
 type EnvironmentForm = { [K in keyof Environment]-?: number }
@@ -100,33 +109,28 @@ const altitudeApplies = computed(() => windApplies.value && environment.value.wi
 // A grey slider says what cannot be changed but not why, so each group explains itself: what the
 // running frame ignores outright, the wind it would take but silently scale away, and what the
 // wind stands in for on a vehicle that has no air around it.
-interface Note {
-  text: string
-  warning: boolean
-}
-
-const windNotes = computed<Note[]>(() => {
+const windNotes = computed<BannerContent[]>(() => {
   if (!frameKnown.value) {
     return []
   }
   if (model.value.noWind) {
-    return [{ text: `The ${frame.value} frame ignores wind — it ${model.value.noWind}.`, warning: true }]
+    return [{ text: `The ${frame.value} frame ignores wind — it ${model.value.noWind}.`, severity: 'warning' }]
   }
-  const notes: Note[] = []
+  const notes: BannerContent[] = []
   if (model.value.surface && environment.value.wind_profile !== NO_WIND_PROFILE) {
     notes.push({
       text: `This profile fades the wind to nothing at ground level, and the ${frame.value} frame never leaves it.
         Set the profile to None for the wind to be felt.`,
-      warning: true,
+      severity: 'warning',
     })
   }
   if (model.value.windIs) {
-    notes.push({ text: model.value.windIs, warning: false })
+    notes.push({ text: model.value.windIs })
   }
   return notes
 })
 
-const waterNotes = computed<Note[]>(() => {
+const waterNotes = computed<BannerContent[]>(() => {
   const because = model.value.noWater
   if (!frameKnown.value || !because) {
     return []
@@ -135,7 +139,7 @@ const waterNotes = computed<Note[]>(() => {
     {
       text: `The ${frame.value} frame ignores waves and current — it ${because}. Switch to a motorboat or
         sailboat frame for them to move the vehicle.`,
-      warning: true,
+      severity: 'warning',
     },
   ]
 })
@@ -198,10 +202,10 @@ const pendingChange = computed(() => {
 // simulator is not running, which is worth saying rather than reporting a clean success.
 function reportApplied(result: AppliedParams, what: string): void {
   if (result.unverified.length) {
-    notify(`${what}, but ${result.unverified.join(', ')} did not take. Try again.`, 'warning')
+    notify(`${what}, but ${result.unverified.join(', ')} did not take. Try again.`, { severity: 'warning' })
     return
   }
-  notify(`${what}.`, 'success')
+  notify(`${what}.`, { severity: 'success' })
 }
 
 // Driven by the view, which keeps the loading overlay up until every panel has its data.
@@ -240,12 +244,6 @@ const degrees = (value: number): string => `${value.toFixed(0)}°`
 const meters = (value: number): string => `${value.toFixed(1)} m`
 const seconds = (value: number): string => `${value.toFixed(1)} s`
 const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
-
-const NOTE_BASE_CLASSES = 'flex items-center gap-2 rounded-[6px] border text-xs px-3 py-2'
-const noteClasses = (note: Note): string =>
-  note.warning
-    ? `${NOTE_BASE_CLASSES} bg-[#FB8C0022] border-[#FB8C0055] text-[#FFB74D]`
-    : `${NOTE_BASE_CLASSES} bg-[#4FC3F71A] border-[#4FC3F744] text-[#81D4FA]`
 </script>
 
 <template>
@@ -286,16 +284,10 @@ const noteClasses = (note: Note): string =>
         Wind
       </div>
       <div class="flex flex-col gap-3">
-        <div
-          v-for="note in windNotes"
-          :key="note.text"
-          :class="noteClasses(note)"
-        >
-          <v-icon size="16">
-            {{ note.warning ? 'mdi-alert' : 'mdi-information-outline' }}
-          </v-icon>
-          {{ note.text }}
-        </div>
+        <BlueBannerGroup
+          v-if="windNotes.length > 0"
+          :banners="windNotes"
+        />
         <BlueSlider
           v-model="environment.wind_speed"
           name="wind-speed"
@@ -308,17 +300,13 @@ const noteClasses = (note: Note): string =>
           :disabled="!windApplies"
           :format-display="metersPerSecond"
         />
-        <BlueSlider
+        <BlueWindRose
           v-model="environment.wind_direction"
           name="wind-direction"
           label="Direction"
           theme="dark"
-          width="380px"
-          :min="0"
-          :max="360"
-          :step="1"
+          width="240px"
           :disabled="!windApplies"
-          :format-display="degrees"
         />
         <BlueSlider
           v-model="environment.wind_elevation"
@@ -384,16 +372,10 @@ const noteClasses = (note: Note): string =>
         Waves &amp; current
       </div>
       <div class="flex flex-col gap-3">
-        <div
-          v-for="note in waterNotes"
-          :key="note.text"
-          :class="noteClasses(note)"
-        >
-          <v-icon size="16">
-            mdi-alert
-          </v-icon>
-          {{ note.text }}
-        </div>
+        <BlueBannerGroup
+          v-if="waterNotes.length > 0"
+          :banners="waterNotes"
+        />
         <BlueSelect
           v-model="environment.wave_enable"
           label="Wave mode"
@@ -415,6 +397,14 @@ const noteClasses = (note: Note): string =>
           :disabled="!waterApplies"
           :format-display="meters"
         />
+        <BlueWindRose
+          v-model="environment.wave_direction"
+          name="wave-direction"
+          label="Wave direction"
+          theme="dark"
+          width="240px"
+          :disabled="!waterApplies"
+        />
         <BlueSlider
           v-model="environment.tide_speed"
           name="current-speed"
@@ -427,17 +417,13 @@ const noteClasses = (note: Note): string =>
           :disabled="!waterApplies"
           :format-display="metersPerSecond"
         />
-        <BlueSlider
+        <BlueWindRose
           v-model="environment.tide_direction"
           name="current-direction"
           label="Current direction"
           theme="dark"
-          width="380px"
-          :min="0"
-          :max="360"
-          :step="1"
+          width="240px"
           :disabled="!waterApplies"
-          :format-display="degrees"
         />
       </div>
     </div>
@@ -445,15 +431,16 @@ const noteClasses = (note: Note): string =>
     <!-- Whatever the frame ignores sits below this row: the groups it can act on come first,
          and Apply draws the line between what is worth setting and what is only explained. -->
     <div class="order-4 flex justify-end">
-      <v-btn
-        size="small"
-        color="primary"
+      <BlueButton
+        variant="filled"
+        density="compact"
+        theme="dark"
         :loading="busy"
         :disabled="!isSitl || !pendingChange"
         @click="apply"
       >
         Apply conditions
-      </v-btn>
+      </BlueButton>
     </div>
   </div>
 </template>

@@ -78,10 +78,16 @@ SEND_DELAY = 0.02
 
 # mavlink2rest keeps one PARAM_VALUE per vehicle, so any other client reading parameters —
 # Cockpit opening its parameter editor, BlueOS refreshing — overwrites the slot our read-back
-# is watching, and the answer we are waiting for is gone. Losing that race is what made a
-# spawn location that had been written correctly report itself as unwritten, so the reads that
-# have to be right wait several times longer than a quiet link needs.
+# is watching, and the answer we are waiting for is gone. A write that has to be confirmed
+# rather than merely attempted therefore waits several times longer than a quiet link needs,
+# so a value that did land is not reported as unwritten.
 NAMED_SET_VERIFY_TIMEOUT = 3.0
+
+# The other client reading parameters is usually this one: the page loads every panel at once,
+# and each panel reads its own handful. Held from a request until its answer lands, so two of
+# our own reads queue instead of carrying each other's answers off — the one kind of loss that
+# is ours to prevent rather than to survive.
+_param_lock = asyncio.Lock()
 
 
 async def set_param_verified(
@@ -107,12 +113,15 @@ async def set_param_verified(
     """
     readback: Optional[float] = None
     for attempt in range(1, attempts + 1):
-        # Counted before the write so the autopilot's own echo of it can settle the
-        # read-back, while a value cached from before the write still cannot.
-        since = await param_value_count(system_id)
-        await set_param(name, value, system_id)
-        await asyncio.sleep(SEND_DELAY)
-        readback = await get_param(name, system_id, timeout, poll_interval, since=since)
+        # The write and its read-back are one exchange: another read starting in between would
+        # take the echo, and this would write again over a value that had landed.
+        async with _param_lock:
+            # Counted before the write so the autopilot's own echo of it can settle the
+            # read-back, while a value cached from before the write still cannot.
+            since = await param_value_count(system_id)
+            await set_param(name, value, system_id)
+            await asyncio.sleep(SEND_DELAY)
+            readback = await _read_param_once(name, system_id, timeout, poll_interval, since)
         if readback is not None and values_match(readback, value):
             return readback
         if readback is None and not retry_on_silence:
@@ -174,18 +183,18 @@ async def param_value_count(system_id: int = DEFAULT_SYSTEM_ID) -> Optional[int]
     return _message_counter(await read_message("PARAM_VALUE", system_id))
 
 
-async def get_param(
+async def _read_param_once(
     name: str,
-    system_id: int = DEFAULT_SYSTEM_ID,
-    timeout: float = 3.0,
-    poll_interval: float = 0.2,
-    since: Optional[int] = None,
+    system_id: int,
+    timeout: float,
+    poll_interval: float,
+    since: Optional[int],
 ) -> Optional[float]:
-    """Read one parameter by name, or None when the autopilot does not answer for it.
+    """One request for a parameter and the wait for its answer, the caller holding the lock.
 
-    ``since`` is a PARAM_VALUE count from before the caller did something the autopilot
-    answers unprompted — a write, which it echoes — so that the echo counts as the answer
-    instead of being dismissed as stale. It defaults to the count at the time of the request.
+    ``since`` is a PARAM_VALUE count from before the caller did something the autopilot answers
+    unprompted — a write, which it echoes — so that the echo counts as the answer instead of
+    being dismissed as stale. None takes the count at the time of the request.
     """
     if since is None:
         since = await param_value_count(system_id)
@@ -207,10 +216,34 @@ async def get_param(
         since,
     )
     if message is None:
-        logger.warning(f"Timed out reading parameter {name}")
         return None
     value = message.get("param_value")
     return float(value) if isinstance(value, (int, float)) else None
+
+
+async def get_param(
+    name: str,
+    system_id: int = DEFAULT_SYSTEM_ID,
+    timeout: float = 3.0,
+    poll_interval: float = 0.2,
+    attempts: int = 1,
+) -> Optional[float]:
+    """Read one parameter by name, or None when the autopilot does not answer for it.
+
+    ``attempts`` asks again when nothing comes back, and is worth spending wherever a missing
+    answer would otherwise pass for a missing value: an autopilot still settling after a restart
+    answers late rather than not at all, and a client outside this process — Cockpit's parameter
+    editor, BlueOS refreshing — can still carry an answer off the one slot that holds it.
+    """
+    async with _param_lock:
+        for attempt in range(1, attempts + 1):
+            value = await _read_param_once(name, system_id, timeout, poll_interval, None)
+            if value is not None:
+                return value
+            if attempt < attempts:
+                logger.debug(f"No answer for parameter {name}; asking again")
+    logger.warning(f"Timed out reading parameter {name}")
+    return None
 
 
 async def get_param_by_index(
@@ -224,24 +257,25 @@ async def get_param_by_index(
     A PARAM_REQUEST_READ with a param_index of 0 or more selects by index and ignores the
     name, which is the only way to ask a question every ArduPilot version answers the same.
     """
-    since = _message_counter(await read_message("PARAM_VALUE", system_id))
-    await send_message(
-        {
-            "type": "PARAM_REQUEST_READ",
-            "param_id": _encode_param_id(""),
-            "param_index": index,
-            "target_system": system_id,
-            "target_component": 0,
-        }
-    )
+    async with _param_lock:
+        since = _message_counter(await read_message("PARAM_VALUE", system_id))
+        await send_message(
+            {
+                "type": "PARAM_REQUEST_READ",
+                "param_id": _encode_param_id(""),
+                "param_index": index,
+                "target_system": system_id,
+                "target_component": 0,
+            }
+        )
 
-    message = await _await_param_value(
-        lambda answer: answer.get("param_index") == index,
-        system_id,
-        timeout,
-        poll_interval,
-        since,
-    )
+        message = await _await_param_value(
+            lambda answer: answer.get("param_index") == index,
+            system_id,
+            timeout,
+            poll_interval,
+            since,
+        )
     return _decode_param_id(message.get("param_id", "")) if message else None
 
 
@@ -393,48 +427,51 @@ async def dump_all_params(
     params: Dict[str, float] = {}
     expected: Optional[int] = None
 
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None)) as ws_session:
-        async with ws_session.ws_connect(ws_url) as ws:
-            await send_message(
-                {
-                    "type": "PARAM_REQUEST_LIST",
-                    "target_system": system_id,
-                    "target_component": AUTOPILOT_COMPONENT_ID,
-                }
-            )
-            deadline = asyncio.get_event_loop().time() + timeout
-            while asyncio.get_event_loop().time() < deadline:
-                remaining = min(deadline - asyncio.get_event_loop().time(), idle_timeout)
-                try:
-                    raw = await ws.receive(timeout=max(remaining, 0.1))
-                except asyncio.TimeoutError:
-                    break  # stream went quiet; assume the burst is done
-                if raw.type is not aiohttp.WSMsgType.TEXT:
-                    if raw.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+    # The burst overwrites the cached PARAM_VALUE hundreds of times over, so a read running
+    # alongside it would find everything except its own answer: they take turns instead.
+    async with _param_lock:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None)) as ws_session:
+            async with ws_session.ws_connect(ws_url) as ws:
+                await send_message(
+                    {
+                        "type": "PARAM_REQUEST_LIST",
+                        "target_system": system_id,
+                        "target_component": AUTOPILOT_COMPONENT_ID,
+                    }
+                )
+                deadline = asyncio.get_event_loop().time() + timeout
+                while asyncio.get_event_loop().time() < deadline:
+                    remaining = min(deadline - asyncio.get_event_loop().time(), idle_timeout)
+                    try:
+                        raw = await ws.receive(timeout=max(remaining, 0.1))
+                    except asyncio.TimeoutError:
+                        break  # stream went quiet; assume the burst is done
+                    if raw.type is not aiohttp.WSMsgType.TEXT:
+                        if raw.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            break
+                        continue
+                    try:
+                        body = json.loads(raw.data)
+                    except (ValueError, TypeError):
+                        continue
+                    message = body.get("message", body)
+                    if message.get("type") != "PARAM_VALUE":
+                        continue
+                    header = body.get("header") or {}
+                    if header.get("component_id") not in (None, AUTOPILOT_COMPONENT_ID):
+                        continue
+                    name = _decode_param_id(message.get("param_id", ""))
+                    if not name:
+                        continue
+                    try:
+                        params[name] = float(message.get("param_value"))
+                    except (TypeError, ValueError):
+                        continue
+                    count = message.get("param_count")
+                    if isinstance(count, int) and count > 0:
+                        expected = count
+                    if expected is not None and len(params) >= expected:
                         break
-                    continue
-                try:
-                    body = json.loads(raw.data)
-                except (ValueError, TypeError):
-                    continue
-                message = body.get("message", body)
-                if message.get("type") != "PARAM_VALUE":
-                    continue
-                header = body.get("header") or {}
-                if header.get("component_id") not in (None, AUTOPILOT_COMPONENT_ID):
-                    continue
-                name = _decode_param_id(message.get("param_id", ""))
-                if not name:
-                    continue
-                try:
-                    params[name] = float(message.get("param_value"))
-                except (TypeError, ValueError):
-                    continue
-                count = message.get("param_count")
-                if isinstance(count, int) and count > 0:
-                    expected = count
-                if expected is not None and len(params) >= expected:
-                    break
 
     if expected is not None and len(params) < expected:
         logger.warning(f"Parameter dump captured {len(params)}/{expected} parameters")
