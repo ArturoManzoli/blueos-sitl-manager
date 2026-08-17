@@ -328,8 +328,12 @@ async def _stage_boot(job: ApplyJob, request: "_Request", progress: "_Progress")
     if not progress.wanted(STEP_BOOT, progress.installed or progress.frame_changed):
         _finish(job, STEP_BOOT, "No restart needed", state=StepState.SKIPPED)
         return
-    # A firmware install restarts the autopilot on its own.
-    await _boot(job, STEP_BOOT, restart=not progress.installed, detail="Waiting for the autopilot to come back")
+    # A firmware install restarts the autopilot on its own, but it does so before the step
+    # above persisted the frame, and ArduPilot Manager only reads the frame while starting
+    # SITL. A frame that changed therefore needs a restart of its own even then, or the
+    # simulator keeps running the model the user just replaced.
+    restart = progress.frame_changed or not progress.installed
+    await _boot(job, STEP_BOOT, restart=restart, detail="Waiting for the autopilot to come back")
 
 
 async def _stage_parameters(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
