@@ -272,9 +272,9 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
 
     One parameter dump up front tells us which values are already correct, which is far
     quicker than reading them back one at a time and makes re-applying a preset almost
-    instant. A dump can drop packets, so a name it does not mention is still written and
-    read back rather than assumed missing — only a parameter that never answers a read and
-    that the dump never mentioned either is reported as unsupported by this firmware.
+    instant. A dump can drop packets, so a name it does not mention is read on its own rather
+    than assumed missing — only a parameter that answers neither the dump, nor that read, nor
+    the write that follows is reported as unsupported by this firmware.
     """
     # Cleared rather than appended to, so retrying this step reports one pass, not two.
     job.records.clear()
@@ -292,15 +292,21 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
         _begin(job, STEP_PARAMETERS, f"Sending parameter {job.params_done + 1}/{job.params_total}: {name}")
 
         current = onboard.get(name)
+        if current is None:
+            # A name the dump dropped is one nothing is known about yet, so it is asked for
+            # before being written: a value that already matches then costs neither a write nor
+            # the restart that a write would earn, and silence here is the first sign of a
+            # firmware that does not have the parameter at all.
+            current = await mavlink.get_param(name, timeout=PARAM_READ_TIMEOUT, attempts=PARAM_READ_ATTEMPTS)
         if current is not None and mavlink.values_match(current, target):
             _record(job, name, target, ParamOutcome.UNCHANGED)
             continue
 
         readback = await mavlink.set_param_verified(name, target, attempts=PARAM_ATTEMPTS)
         if readback is None:
-            # Silence means this firmware does not have the name, unless the dump just listed
-            # it: then the answer went missing rather than the parameter, and the write that
-            # preceded it went out over a vehicle holding something else.
+            # Only the write's own echo can settle that read, and a vehicle with nothing to
+            # change may send none, so silence alone does not mean the name is missing. What
+            # does is silence from a name that answered neither the dump nor a read of its own.
             missing = current is None
             _record(job, name, target, ParamOutcome.UNSUPPORTED if missing else ParamOutcome.UNCONFIRMED)
             continue
