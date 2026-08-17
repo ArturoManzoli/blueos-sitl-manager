@@ -78,8 +78,9 @@ export interface ApplyStep {
 }
 
 // 'unchanged': the vehicle already held the value, so nothing was sent.
+// 'unconfirmed': the write went out, but no read-back came to prove it landed.
 // 'unsupported': the running firmware does not have the parameter at all.
-export type ParamOutcome = 'written' | 'unchanged' | 'unsupported' | 'failed'
+export type ParamOutcome = 'written' | 'unchanged' | 'unconfirmed' | 'unsupported' | 'failed'
 
 export interface ParamRecord {
   name: string

@@ -32,6 +32,7 @@ const running = computed(() => job.value?.state === 'running')
 const OUTCOME_STYLE: Record<ParamOutcome, { label: string; color: string }> = {
   written: { label: 'written', color: '#66BB6A' },
   unchanged: { label: 'unchanged', color: '#90A4AE' },
+  unconfirmed: { label: 'not confirmed', color: '#4DD0E1' },
   unsupported: { label: 'not supported', color: '#FFB74D' },
   failed: { label: 'rejected', color: '#EF5350' },
 }

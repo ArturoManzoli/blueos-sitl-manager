@@ -237,14 +237,24 @@ async def _boot(job: ApplyJob, key: str, restart: bool, detail: str, timeout: fl
     _finish(job, key, "Autopilot online")
 
 
+def _changed(counts: Dict[str, int]) -> int:
+    """How many parameters the vehicle did not already hold and was therefore written.
+
+    What the rebuild restart exists for, so a write whose read-back went missing counts here:
+    the value it carried is not the one the vehicle had, and a restart that hinged on an answer
+    another client can carry off would skip the rebuild the new values need.
+    """
+    return counts.get(ParamOutcome.WRITTEN.value, 0) + counts.get(ParamOutcome.UNCONFIRMED.value, 0)
+
+
 async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
     """Write the parameters that differ from what the vehicle already holds.
 
     One parameter dump up front tells us which values are already correct, which is far
     quicker than reading them back one at a time and makes re-applying a preset almost
     instant. A dump can drop packets, so a name it does not mention is still written and
-    read back rather than assumed missing — only a parameter that never answers a read is
-    reported as unsupported by this firmware.
+    read back rather than assumed missing — only a parameter that never answers a read and
+    that the dump never mentioned either is reported as unsupported by this firmware.
     """
     # Cleared rather than appended to, so retrying this step reports one pass, not two.
     job.records.clear()
@@ -256,7 +266,6 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
     if not onboard:
         logger.warning("Parameter dump came back empty; every parameter will be written and verified")
 
-    written = 0
     for name, value in params.items():
         target = float(value)
         job.current_param = name
@@ -269,10 +278,13 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
 
         readback = await mavlink.set_param_verified(name, target, attempts=PARAM_ATTEMPTS)
         if readback is None:
-            _record(job, name, target, ParamOutcome.UNSUPPORTED)
+            # Silence means this firmware does not have the name, unless the dump just listed
+            # it: then the answer went missing rather than the parameter, and the write that
+            # preceded it went out over a vehicle holding something else.
+            missing = current is None
+            _record(job, name, target, ParamOutcome.UNSUPPORTED if missing else ParamOutcome.UNCONFIRMED)
             continue
         if mavlink.values_match(readback, target):
-            written += 1
             _record(job, name, target, ParamOutcome.WRITTEN)
         else:
             logger.warning(f"{name} read back as {readback} after writing {target}")
@@ -281,7 +293,7 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
     job.current_param = None
     summary = ", ".join(f"{count} {outcome}" for outcome, count in sorted(job.counts.items()))
     _finish(job, STEP_PARAMETERS, summary or "No parameters to send")
-    return written
+    return _changed(job.counts)
 
 
 def _expected_vehicle_type(vehicle: Optional[Vehicle], params: Dict[str, float]) -> Optional[str]:
@@ -483,7 +495,7 @@ def _resume(job: ApplyJob, start: int) -> ApplyJob:
         # so a restart step running now has to issue its own.
         installed=False,
         frame_changed=_step(job, STEP_FRAME).state is StepState.DONE,
-        written=job.counts.get(ParamOutcome.WRITTEN.value, 0),
+        written=_changed(job.counts),
         forced=_STAGES[start][0] if start < len(_STAGES) else None,
     )
     for key, _ in _STAGES[start:]:

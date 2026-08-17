@@ -141,12 +141,16 @@ class ParamOutcome(str, Enum):
     """What happened to one parameter during the parameter stage.
 
     ``UNCHANGED`` means the vehicle already held the wanted value, so nothing was sent.
+    ``UNCONFIRMED`` means the write went out for a parameter the vehicle does have, but no
+    read-back came: another client reading parameters can carry the answer off, so the value
+    most likely landed and simply cannot be proven to have.
     ``UNSUPPORTED`` means the running firmware does not have the parameter at all, which
     is expected when a preset carries values from a different ArduPilot version.
     """
 
     WRITTEN = "written"
     UNCHANGED = "unchanged"
+    UNCONFIRMED = "unconfirmed"
     UNSUPPORTED = "unsupported"
     FAILED = "failed"
 
