@@ -420,6 +420,62 @@ async def get_autopilot_version(
     return None
 
 
+async def _collect_param_burst(
+    ws: aiohttp.ClientWebSocketResponse,
+    params: Dict[str, float],
+    deadline: float,
+    idle_timeout: float,
+) -> Optional[int]:
+    """Collect a ``PARAM_REQUEST_LIST`` burst off the stream into ``params``.
+
+    Returns the table size the autopilot declared, or None if it never said. Stops on a
+    complete table, on the stream going quiet for ``idle_timeout``, or on ``deadline``.
+    """
+    expected: Optional[int] = None
+    loop = asyncio.get_event_loop()
+    while loop.time() < deadline:
+        remaining = min(deadline - loop.time(), idle_timeout)
+        try:
+            raw = await ws.receive(timeout=max(remaining, 0.1))
+        except asyncio.TimeoutError:
+            return expected  # the stream went quiet
+        if raw.type is not aiohttp.WSMsgType.TEXT:
+            if raw.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                return expected
+            continue
+        try:
+            body = json.loads(raw.data)
+        except (ValueError, TypeError):
+            continue
+        message = body.get("message", body)
+        if message.get("type") != "PARAM_VALUE":
+            continue
+        header = body.get("header") or {}
+        if header.get("component_id") not in (None, AUTOPILOT_COMPONENT_ID):
+            continue
+        name = _decode_param_id(message.get("param_id", ""))
+        if not name:
+            continue
+        try:
+            params[name] = float(message.get("param_value"))
+        except (TypeError, ValueError):
+            continue
+        count = message.get("param_count")
+        if isinstance(count, int) and count > 0:
+            expected = count
+        if expected is not None and len(params) >= expected:
+            return expected
+    return expected
+
+
+# How many times the parameter list is asked for before the dump gives up on completing it. A
+# burst that stops short is not a finished burst: an autopilot fresh from a restart can answer
+# the first few names and then go quiet for longer than a settled one ever does, and a dump
+# taken as complete at that point reports parameters the vehicle holds as ones it does not.
+# Asking again costs nothing once the table is in, since a complete dump returns before this.
+DUMP_REQUESTS = 3
+
+
 async def dump_all_params(
     system_id: int = DEFAULT_SYSTEM_ID,
     timeout: float = 30.0,
@@ -430,7 +486,8 @@ async def dump_all_params(
     mavlink2rest only caches the latest ``PARAM_VALUE`` over REST, so the burst that
     answers a ``PARAM_REQUEST_LIST`` can only be captured on the websocket stream. We
     open the stream, request the list, and collect values until the autopilot's declared
-    ``param_count`` is reached, the stream idles, or the overall timeout elapses.
+    ``param_count`` is reached, the overall timeout elapses, or the stream has gone quiet
+    short of the table that many times.
     """
     ws_url = MAVLINK2REST_URL.replace("http", "ws", 1) + "/ws/mavlink?filter=PARAM_VALUE"
     params: Dict[str, float] = {}
@@ -441,46 +498,24 @@ async def dump_all_params(
     async with _param_lock:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None)) as ws_session:
             async with ws_session.ws_connect(ws_url) as ws:
-                await send_message(
-                    {
-                        "type": "PARAM_REQUEST_LIST",
-                        "target_system": system_id,
-                        "target_component": AUTOPILOT_COMPONENT_ID,
-                    }
-                )
                 deadline = asyncio.get_event_loop().time() + timeout
-                while asyncio.get_event_loop().time() < deadline:
-                    remaining = min(deadline - asyncio.get_event_loop().time(), idle_timeout)
-                    try:
-                        raw = await ws.receive(timeout=max(remaining, 0.1))
-                    except asyncio.TimeoutError:
-                        break  # stream went quiet; assume the burst is done
-                    if raw.type is not aiohttp.WSMsgType.TEXT:
-                        if raw.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                            break
-                        continue
-                    try:
-                        body = json.loads(raw.data)
-                    except (ValueError, TypeError):
-                        continue
-                    message = body.get("message", body)
-                    if message.get("type") != "PARAM_VALUE":
-                        continue
-                    header = body.get("header") or {}
-                    if header.get("component_id") not in (None, AUTOPILOT_COMPONENT_ID):
-                        continue
-                    name = _decode_param_id(message.get("param_id", ""))
-                    if not name:
-                        continue
-                    try:
-                        params[name] = float(message.get("param_value"))
-                    except (TypeError, ValueError):
-                        continue
-                    count = message.get("param_count")
-                    if isinstance(count, int) and count > 0:
-                        expected = count
+                for attempt in range(1, DUMP_REQUESTS + 1):
+                    await send_message(
+                        {
+                            "type": "PARAM_REQUEST_LIST",
+                            "target_system": system_id,
+                            "target_component": AUTOPILOT_COMPONENT_ID,
+                        }
+                    )
+                    declared = await _collect_param_burst(ws, params, deadline, idle_timeout)
+                    if declared is not None:
+                        expected = declared
                     if expected is not None and len(params) >= expected:
                         break
+                    if asyncio.get_event_loop().time() >= deadline:
+                        break
+                    if attempt < DUMP_REQUESTS:
+                        logger.warning(f"Parameter burst stopped at {len(params)}/{expected}; asking again")
 
     if expected is not None and len(params) < expected:
         logger.warning(f"Parameter dump captured {len(params)}/{expected} parameters")
