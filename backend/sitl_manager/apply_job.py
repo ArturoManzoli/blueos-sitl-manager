@@ -57,12 +57,12 @@ PARAM_ATTEMPTS = 2
 # Long enough for the autopilot being replaced to fall silent before its successor is looked for.
 RESTART_SETTLE = 2.0
 
-# Reading the spawn location holds up a vehicle change that is about to take minutes, so each
-# parameter gets a short wait — asked again a few times, since an answer lost to another
-# client's read is not a parameter without a value — before it is treated as unreadable. An
-# autopilot that answers for none of the four spends eighteen seconds of that change here.
-SPAWN_READ_TIMEOUT = 1.5
-SPAWN_READ_ATTEMPTS = 3
+# Reading a parameter here holds up a vehicle change that is about to take minutes, so each one
+# gets a short wait — asked again a few times, since an answer lost to another client's read is
+# not a parameter without a value — before it is treated as unreadable. An autopilot that
+# answers for none of the four spawn parameters spends eighteen seconds of that change here.
+PARAM_READ_TIMEOUT = 1.5
+PARAM_READ_ATTEMPTS = 3
 
 
 class _Request(NamedTuple):
@@ -163,7 +163,7 @@ async def _read_spawn() -> Dict[str, float]:
     """
     spawn: Dict[str, float] = {}
     for field_name, param in LOCATION_PARAM_MAP.items():
-        value = await mavlink.get_param(param, timeout=SPAWN_READ_TIMEOUT, attempts=SPAWN_READ_ATTEMPTS)
+        value = await mavlink.get_param(param, timeout=PARAM_READ_TIMEOUT, attempts=PARAM_READ_ATTEMPTS)
         spawn[param] = DEFAULT_SPAWN_BY_FIELD[field_name] if value is None else value
 
     latitude, longitude = LOCATION_PARAM_MAP["latitude"], LOCATION_PARAM_MAP["longitude"]
@@ -311,6 +311,51 @@ def _expected_vehicle_type(vehicle: Optional[Vehicle], params: Dict[str, float])
     return None
 
 
+# What ArduPilot's rover simulation makes of servo outputs 1 and 3, per SITL frame. A skid
+# frame reads them as the left and right motor and derives yaw from their difference, while a
+# steered one takes ground steering and throttle, so a vehicle whose outputs are set for the
+# other pairing turns in circles instead of holding a heading. Sailboats are left out: their
+# outputs carry a mainsail too, so there is no single pairing to check against.
+_SKID_OUTPUTS = {"SERVO1_FUNCTION": 73, "SERVO3_FUNCTION": 74}  # ThrottleLeft, ThrottleRight
+_STEERED_OUTPUTS = {"SERVO1_FUNCTION": 26, "SERVO3_FUNCTION": 70}  # GroundSteering, Throttle
+FRAME_OUTPUTS: Dict[str, Dict[str, int]] = {
+    "motorboat-skid": _SKID_OUTPUTS,
+    "rover-skid": _SKID_OUTPUTS,
+    "motorboat": _STEERED_OUTPUTS,
+    "rover": _STEERED_OUTPUTS,
+}
+
+
+async def _output_mismatch(frame: Optional[str]) -> Optional[str]:
+    """What is wrong between a frame and the outputs it drives, or None when they agree.
+
+    Nothing enforces this pairing: the frame decides what the simulator makes of outputs 1 and
+    3, the SERVO*_FUNCTION parameters decide what the autopilot puts on them, and a
+    configuration that gets them the wrong way round drives in circles while every step of the
+    job reports success. A frame chosen by hand is exactly how that happens, since it changes
+    the physics without touching the parameters.
+    """
+    wanted = FRAME_OUTPUTS.get(frame or "")
+    if wanted is None:
+        return None
+    try:
+        actual = {
+            name: await mavlink.get_param(name, timeout=PARAM_READ_TIMEOUT, attempts=PARAM_READ_ATTEMPTS)
+            for name in wanted
+        }
+    except Exception as error:  # noqa: BLE001 - an advisory read must not fail the job
+        logger.debug(f"Could not read the output functions: {error}")
+        return None
+    wrong = ", ".join(
+        f"{name} is {round(value)} rather than {wanted[name]}"
+        for name, value in actual.items()
+        if value is not None and round(value) != wanted[name]
+    )
+    if not wrong:
+        return None
+    return f"{frame} does not match the vehicle's outputs ({wrong}), so it will not steer. A preset sets them."
+
+
 async def _verify(job: ApplyJob, expected: Optional[str]) -> None:
     """Confirm what the autopilot now reports itself as over MAVLink.
 
@@ -382,7 +427,13 @@ async def _stage_rebuild(job: ApplyJob, request: "_Request", progress: "_Progres
 
 
 async def _stage_verify(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
+    # Cleared rather than appended to, so retrying this step reports one pass, not two.
+    job.warnings.clear()
     await _verify(job, _expected_vehicle_type(request.vehicle, request.params))
+    mismatch = await _output_mismatch(await autopilot.get_sitl_frame())
+    if mismatch is not None:
+        logger.warning(mismatch)
+        job.warnings.append(mismatch)
 
 
 # In dependency order: firmware, then the frame it runs, then the reboot that loads both,
@@ -421,6 +472,8 @@ def _settle(job: ApplyJob) -> None:
     job.detail = f"{job.title} applied."
     if job.skipped:
         job.detail = f"{job.title} applied, skipped: {', '.join(job.skipped)}."
+    if job.warnings:
+        job.detail = " ".join([job.detail, *job.warnings])
 
 
 async def _run(job: ApplyJob, request: "_Request", progress: "_Progress", start: int = 0) -> None:

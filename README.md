@@ -26,7 +26,9 @@ Firmware page, the Parameter Editor and MAVProxy.
   preset's. The frames offered are only the ones the chosen firmware can run, since each is
   a physics model compiled into one vehicle's binary. Nothing here reaches the vehicle until
   "Apply and restart" is pressed, and that button stays disabled while the section says what
-  the vehicle already is.
+  the vehicle already is. A frame chosen by hand changes the physics and nothing else, so the
+  job says so when the vehicle's outputs contradict it: a `motorboat-skid` hull steered by a
+  ground rover's steering and throttle outputs drives in circles.
 - **Ambient conditions** — set ArduPilot `SIM_*` parameters (`SIM_WIND_*`, `SIM_WAVE_*`,
   `SIM_TIDE_*`, `SIM_SPEEDUP`) over MAVLink, with presets (calm pool, light chop, open
   ocean, storm) that fill the sliders for "Apply conditions" to write. See below.

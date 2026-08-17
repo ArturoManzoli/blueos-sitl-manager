@@ -104,6 +104,8 @@ export interface ApplyJob {
   counts: Partial<Record<ParamOutcome, number>>
   // Titles of the steps the user chose to skip after they failed.
   skipped: string[]
+  // Configuration problems no step failed on, e.g. a frame the vehicle's outputs deny.
+  warnings: string[]
   reported_vehicle: string | null
 }
 

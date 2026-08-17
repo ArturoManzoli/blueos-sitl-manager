@@ -188,6 +188,9 @@ class ApplyJob(BaseModel):
     skipped: List[str] = Field(
         default_factory=list, description="Titles of steps the user chose to skip after they failed"
     )
+    warnings: List[str] = Field(
+        default_factory=list, description="Configuration problems no step failed on, e.g. a frame the outputs deny"
+    )
     reported_vehicle: Optional[str] = Field(
         None, description="Vehicle type the autopilot reports over MAVLink once reconfigured"
     )
