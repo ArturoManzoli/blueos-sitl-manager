@@ -50,6 +50,17 @@ whole. A BlueBoat given the generic rover's 5 m/s while keeping the hull's 0.1 g
 limit can only turn at 11 deg/s, a radius of about 25 m, so it orbits waypoints instead of
 reaching them.
 
+The BlueBoat rides ArduPilot's skid motorboat hull, the only model with water in it, and needs
+a firmware new enough to steer it. Until a fix that landed on master after 4.7 branched, the
+marine hulls rotated in place only at exactly zero speed, which a boat in water never reaches;
+at any other speed they yawed in proportion to speed and with its sign, while ArduRover plans
+every corner for a skid-steered vehicle as a stop and a pivot. A waypoint turn therefore
+rotated whichever way the hull was drifting and only came right once the heading error had
+wrapped past 180 degrees. Applying the preset installs a build that has the fix, which is the
+development build while 4.7 is the newest stable one, and goes back to stable of its own accord
+once 4.8 is released. On a fixed hull the product's own steering gains fly it as they are, so
+nothing about how a BlueBoat drives is tuned for the simulator.
+
 Vehicle layers are dumps from real boards, so two families of parameters are dropped from
 them rather than written. The vendor `blacklist.txt` covers per-board calibration (compass
 and accelerometer offsets, device IDs), which describes the machine a dump came from rather

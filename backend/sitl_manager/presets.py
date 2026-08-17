@@ -297,6 +297,14 @@ LOCATION_PRESETS: List[LocationPreset] = [
     ),
 ]
 
+# The oldest firmware whose simulation model steers a frame at all, for the frames that were
+# broken until a known fix. ArduPilot's skid-steered boats yawed only at exactly zero speed,
+# which a boat in water never reaches, and otherwise in proportion to speed and with its sign,
+# so a waypoint turn rotated whichever way the hull was drifting; the fix landed on master after
+# 4.7 branched. A frame named here is installed with a build new enough to run it, which is the
+# development build until the version below is released as stable, and the entry can go then.
+FRAME_MINIMUM_FIRMWARE: Dict[str, str] = {"motorboat-skid": "4.8.0"}
+
 # The Blue Robotics presets are composed from the parameter layers Blue Robotics ships in
 # bluerobotics/Blueos-Parameter-Repository, vendored under data/vendor. Each vehicle is
 # built the way that repository composes it — shared hardware, then the vehicle, then its

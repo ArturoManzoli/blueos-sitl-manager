@@ -28,6 +28,7 @@ from sitl_manager.models import (
 )
 from sitl_manager.presets import (
     DEFAULT_SPAWN_BY_FIELD,
+    FRAME_MINIMUM_FIRMWARE,
     LOCATION_PARAM_MAP,
     SITL_ACCEL_CALIBRATION,
 )
@@ -173,7 +174,22 @@ async def _read_spawn() -> Dict[str, float]:
     return spawn
 
 
-async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
+async def _new_enough(minimum: Optional[str]) -> bool:
+    """Whether the running firmware carries a fix that the frame about to run needs.
+
+    An unreadable version counts as too old: reinstalling costs a download, while keeping a
+    build whose simulation model cannot steer costs a vehicle that does not navigate.
+    """
+    if minimum is None:
+        return True
+    running = await mavlink.get_autopilot_version()
+    if autopilot.is_at_least(running, minimum):
+        return True
+    logger.info(f"The vehicle runs {running}, older than the {minimum} this frame needs")
+    return False
+
+
+async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle, frame: Optional[str]) -> bool:
     """Install the firmware for a vehicle type. Returns whether anything was installed.
 
     Looking up the build is reported apart from fetching it because the lookup goes out to
@@ -181,8 +197,12 @@ async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
     otherwise a long silence on a step that claims to be downloading.
     """
     _begin(job, STEP_VEHICLE, f"Checking the installed {vehicle.value} firmware")
+    # A request only names the frame when it is changing, so what decides which build is needed
+    # is the frame the vehicle ends up on: one whose model was broken until a known release
+    # needs the build that fixes it even when the frame itself is staying where it is.
+    minimum = FRAME_MINIMUM_FIRMWARE.get(frame or await autopilot.get_sitl_frame() or "")
     current = await autopilot.get_firmware_vehicle_type()
-    if current and vehicle.value.lower() in str(current).lower():
+    if current and vehicle.value.lower() in str(current).lower() and await _new_enough(minimum):
         _finish(job, STEP_VEHICLE, f"Already running {current}", state=StepState.SKIPPED)
         return False
     # Read before installing: the new firmware gets its own parameter storage, so the spawn
@@ -192,8 +212,8 @@ async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
     # what brings the vehicle up in the right place.
     global _carried  # noqa: PLW0603 - one autopilot, one job
     _carried = {**SITL_ACCEL_CALIBRATION, **await _read_spawn()}
-    _begin(job, STEP_VEHICLE, f"Looking up the latest stable {vehicle.value} build")
-    firmware = await autopilot.latest_stable_firmware(vehicle)
+    _begin(job, STEP_VEHICLE, f"Looking up the {vehicle.value} build to install")
+    firmware = await autopilot.firmware_to_install(vehicle, minimum)
     name = str(firmware["name"])
     logger.info(f"Installing {name} for {vehicle.value}")
     _begin(job, STEP_VEHICLE, f"Downloading and installing {name}")
@@ -378,7 +398,7 @@ async def _stage_vehicle(job: ApplyJob, request: "_Request", progress: "_Progres
     if request.vehicle is None:
         _finish(job, STEP_VEHICLE, "Unchanged", state=StepState.SKIPPED)
         return
-    progress.installed = await _apply_vehicle(job, request.vehicle)
+    progress.installed = await _apply_vehicle(job, request.vehicle, request.frame)
 
 
 async def _stage_frame(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:

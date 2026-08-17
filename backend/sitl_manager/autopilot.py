@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -129,19 +130,41 @@ async def install_firmware_from_url(url: str, make_default: bool = True) -> None
     )
 
 
-async def latest_stable_firmware(vehicle: Vehicle) -> Dict[str, Any]:
-    """The newest stable build offered for a vehicle type.
+def is_at_least(version: Optional[str], minimum: str) -> bool:
+    """Whether a firmware version is not older than a minimum like ``4.8.0``.
+
+    Reads the numbers out of whatever names the build, so a MAVLink version (``4.8.0``) and an
+    ArduPilot Manager entry (``STABLE-4.8.0``) compare the same way. A build named by nothing but
+    its channel (``DEV``, ``BETA``) carries no version to compare, and so never satisfies one.
+    """
+    if version is None:
+        return False
+    return tuple(int(part) for part in re.findall(r"\d+", version)) >= tuple(
+        int(part) for part in re.findall(r"\d+", minimum)
+    )
+
+
+async def firmware_to_install(vehicle: Vehicle, minimum: Optional[str] = None) -> Dict[str, Any]:
+    """The build to install for a vehicle type: the newest stable one, or the development build
+    when a frame needs a fix that no stable release carries yet.
 
     Kept apart from installing it because looking it up is the slow half, and the caller has
     a step to report while it waits.
 
-    Raises ValueError when no stable build is offered for the vehicle.
+    Raises ValueError when nothing on offer will do.
     """
     firmwares = await available_firmwares(vehicle)
-    stable = next((fw for fw in firmwares if "STABLE" in str(fw.get("name", "")).upper()), None)
-    if stable is None:
-        raise ValueError(f"No stable firmware found for {vehicle.value}.")
-    return stable
+    named = {str(firmware.get("name", "")).upper(): firmware for firmware in firmwares}
+    stable = next((firmware for name, firmware in named.items() if "STABLE" in name), None)
+    if minimum is None or (stable is not None and is_at_least(str(stable["name"]), minimum)):
+        if stable is None:
+            raise ValueError(f"No stable firmware found for {vehicle.value}.")
+        return stable
+    development = named.get("DEV")
+    if development is None:
+        raise ValueError(f"No {vehicle.value} build new enough for {minimum} is offered.")
+    logger.info(f"Stable is older than {minimum}, so the development build is what can run this frame")
+    return development
 
 
 def is_sitl(board: Optional[Dict[str, Any]]) -> bool:
