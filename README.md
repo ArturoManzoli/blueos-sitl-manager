@@ -56,7 +56,9 @@ stripped: IMU orientation and position, analog pins and scaling for a power sens
 SITL simulates itself, I2C/serial buses, and per-output trims and reversals that would spin
 a simulated hull in place. A SITL overlay gets neither filter, since everything in it states
 what the simulator needs — including the placeholder accelerometer and compass offsets that
-let a simulated vehicle pass the prearm 3D-accel check.
+let a simulated vehicle pass the prearm 3D-accel check. Installing firmware starts the vehicle
+from empty parameter storage, so those offsets are written for a configuration that carries
+none of its own too, alongside the spawn location the install took with it.
 
 Outputs follow the simulator's wiring rather than the product's where the two differ.
 `SIM_Rover` takes output 1 as the left motor and output 3 as the right one and derives yaw

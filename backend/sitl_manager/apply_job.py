@@ -26,7 +26,11 @@ from sitl_manager.models import (
     Vehicle,
     VehiclePreset,
 )
-from sitl_manager.presets import DEFAULT_SPAWN_BY_FIELD, LOCATION_PARAM_MAP
+from sitl_manager.presets import (
+    DEFAULT_SPAWN_BY_FIELD,
+    LOCATION_PARAM_MAP,
+    SITL_ACCEL_CALIBRATION,
+)
 from sitl_manager.settings import REBUILD_READY_TIMEOUT, VEHICLE_READY_TIMEOUT
 
 STEP_VEHICLE = "vehicle"
@@ -94,9 +98,11 @@ _StageFn = Callable[[ApplyJob, _Request, _Progress], Awaitable[None]]
 
 _job: Optional[ApplyJob] = None
 _request: Optional[_Request] = None
-# The spawn location carried across a firmware install. Belongs to the job rather than to a
-# single run of it, so a retry that resumes at the parameters step still writes it back.
-_carried_spawn: Dict[str, float] = {}
+# What a firmware install takes away and the parameter step has to put back: the spawn location
+# read off the outgoing firmware, and the placeholder accelerometer calibration that empty
+# parameter storage lacks. Belongs to the job rather than to a single run of it, so a retry that
+# resumes at the parameters step still writes it back.
+_carried: Dict[str, float] = {}
 _task: Optional["asyncio.Task[None]"] = None
 _tasks: Set["asyncio.Task[None]"] = set()
 _next_id = 1
@@ -180,11 +186,12 @@ async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
         _finish(job, STEP_VEHICLE, f"Already running {current}", state=StepState.SKIPPED)
         return False
     # Read before installing: the new firmware gets its own parameter storage, so the spawn
-    # location the user picked is about to revert to SIM_OPOS's zeroes. Written back with the
-    # preset's own parameters below, where the rebuild restart is what brings the vehicle up
-    # in the right place.
-    global _carried_spawn  # noqa: PLW0603 - one autopilot, one job
-    _carried_spawn = await _read_spawn()
+    # location the user picked is about to revert to SIM_OPOS's zeroes, and the accelerometer
+    # calibration that lets a simulated vehicle arm at all is about to be gone with it. Both
+    # are written back with the preset's own parameters below, where the rebuild restart is
+    # what brings the vehicle up in the right place.
+    global _carried  # noqa: PLW0603 - one autopilot, one job
+    _carried = {**SITL_ACCEL_CALIBRATION, **await _read_spawn()}
     _begin(job, STEP_VEHICLE, f"Looking up the latest stable {vehicle.value} build")
     firmware = await autopilot.latest_stable_firmware(vehicle)
     name = str(firmware["name"])
@@ -337,11 +344,11 @@ async def _stage_boot(job: ApplyJob, request: "_Request", progress: "_Progress")
 
 
 async def _stage_parameters(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
-    # The spawn location read before the install rides along with the preset's parameters:
-    # it is a parameter like any other, and sending it here means the rebuild restart is what
-    # applies it, rather than a third reboot. Already-correct values cost nothing, since the
-    # write only happens where the vehicle disagrees.
-    params = {**request.params, **_carried_spawn}
+    # What the install took away rides along with the preset's parameters: each is a parameter
+    # like any other, and sending them here means the rebuild restart is what applies them,
+    # rather than a third reboot. Already-correct values cost nothing, since the write only
+    # happens where the vehicle disagrees.
+    params = {**request.params, **_carried}
     if not params:
         _finish(job, STEP_PARAMETERS, "No parameters to send", state=StepState.SKIPPED)
         return
@@ -429,13 +436,13 @@ def _start(
     frame: Optional[str],
     params: Dict[str, float],
 ) -> ApplyJob:
-    global _job, _request, _task, _next_id, _carried_spawn  # noqa: PLW0603 - one autopilot, one job
+    global _job, _request, _task, _next_id, _carried  # noqa: PLW0603 - one autopilot, one job
 
     if is_running():
         raise JobBusyError("Another configuration change is still running.")
 
     # Belongs to the job about to start, not to the one before it.
-    _carried_spawn = {}
+    _carried = {}
 
     job = ApplyJob(
         id=_next_id,

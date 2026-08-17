@@ -89,6 +89,21 @@ DYNAMICS_PARAMS: Tuple[str, ...] = (
 DYNAMICS_PREFIXES: Tuple[str, ...] = ("ACRO_", "ATC_", "MOT_", "WP_")
 
 
+# ArduPilot reads an accelerometer whose offsets are all zero and whose scales are all one as
+# uncalibrated and refuses to arm on it, which is why every SITL parameter file ArduPilot
+# ships carries these placeholders. A firmware install starts the vehicle from empty parameter
+# storage, so a configuration that brings no calibration of its own is written these. Only the
+# two instances SITL registers are covered, and deliberately: the same check also fails on a
+# calibration that exists for an accelerometer the vehicle does not have, so writing a third
+# instance leaves the vehicle exactly as unarmable as writing none.
+SITL_ACCEL_CALIBRATION: Dict[str, float] = {
+    f"INS_ACC{instance}{quantity}_{axis}": value
+    for instance in ("", "2")
+    for quantity, value in (("OFFS", 0.001), ("SCAL", 1.001))
+    for axis in ("X", "Y", "Z")
+}
+
+
 def _is_hardware_param(name: str) -> bool:
     return name in HARDWARE_PARAMS or name.startswith(HARDWARE_PREFIXES) or name.endswith(HARDWARE_SUFFIXES)
 
