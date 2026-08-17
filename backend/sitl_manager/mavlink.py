@@ -61,13 +61,22 @@ async def set_param(
     )
 
 
+# How close a value has to be to count as the one that was asked for: enough to absorb a
+# float32 round trip, which keeps seven significant digits, and no more. A wider margin also
+# decides that a parameter needs no writing, and the values a simulator turns on can be finer
+# than that: ArduPilot reads an accelerometer whose offsets are zero and whose scales are one
+# as uncalibrated and refuses to arm, so the 0.001 and 1.001 placeholders that make a simulated
+# vehicle armable have to count as values a zeroed vehicle does not already hold.
+PARAM_EPSILON = 1e-6
+
+
 def values_match(readback: float, target: float) -> bool:
     """Whether a parameter read back counts as holding the value that was written.
 
     Parameters travel as float32 and several are stored as integers, so an exact
     comparison would call a correct write a failure.
     """
-    return abs(readback - target) <= max(1e-3, abs(target) * 1e-3)
+    return abs(readback - target) <= max(PARAM_EPSILON, abs(target) * PARAM_EPSILON)
 
 
 # A parameter write is echoed by the autopilot, so the read-back that confirms it normally
