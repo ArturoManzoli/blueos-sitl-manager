@@ -39,6 +39,14 @@ CUSTOM_ENVIRONMENTS_DIR = Path(
         "SITL_CUSTOM_ENVIRONMENTS_DIR", str(Path(__file__).resolve().parent / "data" / "custom_environments")
     )
 )
+
+# Where the simulated battery pack is stored. A single file rather than a folder of presets:
+# a vehicle runs on one pack, and it has to be found again after a restart, because the
+# autopilot is left reporting whatever amperage was last written to it.
+POWER_PACK_FILE = Path(
+    os.environ.get("SITL_POWER_PACK_FILE", str(Path(__file__).resolve().parent / "data" / "battery_pack.json"))
+)
+
 # The spawn location BlueOS ships as SIM_OPOS_* defaults (Florianópolis, Brazil). Stored
 # parameter values take precedence over those defaults, which is what lets the location
 # panel move the spawn point. Also used as a fallback when a parameter cannot be read.

@@ -15,6 +15,7 @@ dist/
 backend/sitl_manager/data/custom_presets/
 backend/sitl_manager/data/custom_locations/
 backend/sitl_manager/data/custom_environments/
+backend/sitl_manager/data/battery_pack.json
 
 # Editors / OS
 .DS_Store

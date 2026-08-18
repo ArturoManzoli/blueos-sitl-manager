@@ -36,6 +36,44 @@ class Environment(BaseModel):
     speedup: Optional[float] = Field(None, gt=0, description="SIM_SPEEDUP, simulation rate multiplier")
 
 
+class BatteryPack(BaseModel):
+    """The battery pack the simulated vehicle runs on, and what its electronics cost it.
+
+    The defaults describe the BlueBoat's original power supply: two 4S 18 Ah Li-ion packs in
+    parallel, so 14.8 V nominal, 36 Ah and 532 Wh.
+    """
+
+    enabled: bool = Field(False, description="Whether the simulated pack drives the vehicle's battery readings")
+    cells: int = Field(4, ge=1, le=24, description="Cells in series, which sets the pack voltage")
+    packs: int = Field(2, ge=1, le=12, description="Packs wired in parallel")
+    capacity_ah: float = Field(18.0, gt=0, le=1000, description="Amp-hours in one pack")
+    idle_watts: float = Field(10.0, ge=0, le=1000, description="What the electronics draw with the vehicle still")
+
+
+class PowerReading(BaseModel):
+    """What the simulated pack is doing, as the panel shows it.
+
+    The speed and wind the draw was computed from are reported alongside it, so a reading
+    that looks surprising can be traced to the conditions behind it.
+    """
+
+    watts: float
+    current: float = Field(..., description="Amps, negative while the pack is being charged")
+    voltage: float
+    charge: float = Field(..., description="Percent of the pack's charge left")
+    consumed_mah: float
+    water_speed: float = Field(..., description="Speed through the water, m/s")
+    headwind: float = Field(..., description="Apparent wind along the hull, m/s; negative is a tailwind")
+    charging: bool = False
+
+
+class PowerSupply(BaseModel):
+    """The pack as configured, with its live reading whenever it is the one being simulated."""
+
+    pack: BatteryPack
+    reading: Optional[PowerReading] = None
+
+
 class Location(BaseModel):
     """Where SITL spawns, held in the ArduPilot ``SIM_OPOS_*`` parameters."""
 

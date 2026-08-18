@@ -31,6 +31,9 @@ EXPOSE 80
 ENV SITL_CUSTOM_PRESETS_DIR=/app/persistent/custom_presets
 ENV SITL_CUSTOM_LOCATIONS_DIR=/app/persistent/custom_locations
 ENV SITL_CUSTOM_ENVIRONMENTS_DIR=/app/persistent/custom_environments
+# The simulated battery pack, kept here so an update does not leave the vehicle reporting a pack
+# the extension no longer knows it is driving.
+ENV SITL_POWER_PACK_FILE=/app/persistent/battery_pack.json
 
 LABEL version="0.2.1"
 
