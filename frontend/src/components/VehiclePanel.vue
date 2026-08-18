@@ -615,7 +615,6 @@ async function onImportFileSelected(event: Event): Promise<void> {
     <div class="flex items-center justify-end gap-2">
       <BlueButton
         variant="filled"
-        density="compact"
         theme="dark"
         :loading="busy"
         :disabled="locked || !pendingChange"
