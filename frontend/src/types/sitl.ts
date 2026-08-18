@@ -16,10 +16,35 @@ export interface Environment {
   speedup?: number | null
 }
 
-export interface EnvironmentPreset {
-  name: string
-  description: string
-  environment: Environment
+// The battery pack the simulated vehicle runs on. The defaults describe the BlueBoat's original
+// supply: two 4S 18 Ah Li-ion packs in parallel, so 14.8 V nominal, 36 Ah and 532 Wh.
+export interface BatteryPack {
+  enabled: boolean
+  cells: number
+  packs: number
+  capacity_ah: number
+  // What the electronics draw with the vehicle still.
+  idle_watts: number
+}
+
+// What the pack reads now, and the conditions its draw was computed from.
+export interface PowerReading {
+  watts: number
+  current: number
+  voltage: number
+  // Percent of the pack's charge left.
+  charge: number
+  consumed_mah: number
+  water_speed: number
+  // Apparent wind along the hull; negative is a following breeze.
+  headwind: number
+  charging: boolean
+}
+
+export interface PowerSupply {
+  pack: BatteryPack
+  // Absent unless the simulated pack is the one the vehicle is reporting.
+  reading: PowerReading | null
 }
 
 export interface AppliedParams {
@@ -43,6 +68,12 @@ export interface PresetOrigin {
   builtin?: boolean | null
   // True on a built-in a saved preset is currently shadowing, which reverts instead.
   overridden?: boolean | null
+}
+
+export interface EnvironmentPreset extends PresetOrigin {
+  name: string
+  description: string
+  environment: Environment
 }
 
 export interface LocationPreset extends PresetOrigin {
@@ -78,8 +109,9 @@ export interface ApplyStep {
 }
 
 // 'unchanged': the vehicle already held the value, so nothing was sent.
+// 'unconfirmed': the write went out, but no read-back came to prove it landed.
 // 'unsupported': the running firmware does not have the parameter at all.
-export type ParamOutcome = 'written' | 'unchanged' | 'unsupported' | 'failed'
+export type ParamOutcome = 'written' | 'unchanged' | 'unconfirmed' | 'unsupported' | 'failed'
 
 export interface ParamRecord {
   name: string
@@ -103,6 +135,8 @@ export interface ApplyJob {
   counts: Partial<Record<ParamOutcome, number>>
   // Titles of the steps the user chose to skip after they failed.
   skipped: string[]
+  // Configuration problems no step failed on, e.g. a frame the vehicle's outputs deny.
+  warnings: string[]
   reported_vehicle: string | null
 }
 

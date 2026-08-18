@@ -359,7 +359,10 @@ function onJobFinished(job: ApplyJob): void {
   if (job.state !== 'succeeded') {
     userChoice.value = null
   }
-  notify(job.detail, { severity: job.state === 'succeeded' ? 'success' : 'warning' })
+  // A job can succeed on a configuration that will not drive, which is a warning rather than
+  // the success every step of it reported.
+  const clean = job.state === 'succeeded' && !job.warnings.length
+  notify(job.detail, { severity: clean ? 'success' : 'warning' })
 }
 
 watch(progressOpen, (open) => {
@@ -612,7 +615,6 @@ async function onImportFileSelected(event: Event): Promise<void> {
     <div class="flex items-center justify-end gap-2">
       <BlueButton
         variant="filled"
-        density="compact"
         theme="dark"
         :loading="busy"
         :disabled="locked || !pendingChange"

@@ -33,6 +33,20 @@ CUSTOM_LOCATIONS_DIR = Path(
     os.environ.get("SITL_CUSTOM_LOCATIONS_DIR", str(Path(__file__).resolve().parent / "data" / "custom_locations"))
 )
 
+# The same, for saved ambient conditions.
+CUSTOM_ENVIRONMENTS_DIR = Path(
+    os.environ.get(
+        "SITL_CUSTOM_ENVIRONMENTS_DIR", str(Path(__file__).resolve().parent / "data" / "custom_environments")
+    )
+)
+
+# Where the simulated battery pack is stored. A single file rather than a folder of presets:
+# a vehicle runs on one pack, and it has to be found again after a restart, because the
+# autopilot is left reporting whatever amperage was last written to it.
+POWER_PACK_FILE = Path(
+    os.environ.get("SITL_POWER_PACK_FILE", str(Path(__file__).resolve().parent / "data" / "battery_pack.json"))
+)
+
 # The spawn location BlueOS ships as SIM_OPOS_* defaults (Florianópolis, Brazil). Stored
 # parameter values take precedence over those defaults, which is what lets the location
 # panel move the spawn point. Also used as a fallback when a parameter cannot be read.
@@ -55,6 +69,11 @@ REBUILD_READY_TIMEOUT = float(os.environ.get("SITL_REBUILD_READY_TIMEOUT", str(V
 # Installing firmware downloads and unpacks a SITL binary, which takes far longer than a
 # normal API call; it needs its own timeout so it is not killed by HTTP_TIMEOUT.
 FIRMWARE_INSTALL_TIMEOUT = float(os.environ.get("SITL_FIRMWARE_INSTALL_TIMEOUT", "300"))
+
+# ArduPilot Manager stops the autopilot and waits for it to come back before answering a
+# restart, which measured over 10 seconds on a Raspberry Pi. Under HTTP_TIMEOUT the request is
+# abandoned mid-restart and reported as a failure, while the vehicle comes up regardless.
+RESTART_TIMEOUT = float(os.environ.get("SITL_RESTART_TIMEOUT", "60"))
 
 # Listing the builds for a vehicle sends ArduPilot Manager to ArduPilot's firmware index
 # over the internet, which measured 14 to 41 seconds from a Raspberry Pi. Generous enough to

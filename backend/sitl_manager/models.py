@@ -36,10 +36,42 @@ class Environment(BaseModel):
     speedup: Optional[float] = Field(None, gt=0, description="SIM_SPEEDUP, simulation rate multiplier")
 
 
-class EnvironmentPreset(BaseModel):
-    name: str
-    description: str
-    environment: Environment
+class BatteryPack(BaseModel):
+    """The battery pack the simulated vehicle runs on, and what its electronics cost it.
+
+    The defaults describe the BlueBoat's original power supply: two 4S 18 Ah Li-ion packs in
+    parallel, so 14.8 V nominal, 36 Ah and 532 Wh.
+    """
+
+    enabled: bool = Field(False, description="Whether the simulated pack drives the vehicle's battery readings")
+    cells: int = Field(4, ge=1, le=24, description="Cells in series, which sets the pack voltage")
+    packs: int = Field(2, ge=1, le=12, description="Packs wired in parallel")
+    capacity_ah: float = Field(18.0, gt=0, le=1000, description="Amp-hours in one pack")
+    idle_watts: float = Field(10.0, ge=0, le=1000, description="What the electronics draw with the vehicle still")
+
+
+class PowerReading(BaseModel):
+    """What the simulated pack is doing, as the panel shows it.
+
+    The speed and wind the draw was computed from are reported alongside it, so a reading
+    that looks surprising can be traced to the conditions behind it.
+    """
+
+    watts: float
+    current: float = Field(..., description="Amps, negative while the pack is being charged")
+    voltage: float
+    charge: float = Field(..., description="Percent of the pack's charge left")
+    consumed_mah: float
+    water_speed: float = Field(..., description="Speed through the water, m/s")
+    headwind: float = Field(..., description="Apparent wind along the hull, m/s; negative is a tailwind")
+    charging: bool = False
+
+
+class PowerSupply(BaseModel):
+    """The pack as configured, with its live reading whenever it is the one being simulated."""
+
+    pack: BatteryPack
+    reading: Optional[PowerReading] = None
 
 
 class Location(BaseModel):
@@ -63,6 +95,13 @@ class NamedPreset(BaseModel):
     # True on a built-in that a saved preset is currently shadowing. Such a preset cannot be
     # deleted, only reverted to the curated definition, which is a different offer to make.
     overridden: Optional[bool] = None
+
+
+class EnvironmentPreset(NamedPreset):
+    # Optional so a preset file written by hand, or saved from the sliders without a note,
+    # still parses; it only ever feeds the tooltip on the preset's button.
+    description: str = ""
+    environment: Environment
 
 
 class LocationPreset(NamedPreset):
@@ -141,12 +180,16 @@ class ParamOutcome(str, Enum):
     """What happened to one parameter during the parameter stage.
 
     ``UNCHANGED`` means the vehicle already held the wanted value, so nothing was sent.
+    ``UNCONFIRMED`` means the write went out for a parameter the vehicle does have, but no
+    read-back came: another client reading parameters can carry the answer off, so the value
+    most likely landed and simply cannot be proven to have.
     ``UNSUPPORTED`` means the running firmware does not have the parameter at all, which
     is expected when a preset carries values from a different ArduPilot version.
     """
 
     WRITTEN = "written"
     UNCHANGED = "unchanged"
+    UNCONFIRMED = "unconfirmed"
     UNSUPPORTED = "unsupported"
     FAILED = "failed"
 
@@ -183,6 +226,9 @@ class ApplyJob(BaseModel):
     counts: Dict[str, int] = Field(default_factory=dict, description="Parameter records grouped by outcome")
     skipped: List[str] = Field(
         default_factory=list, description="Titles of steps the user chose to skip after they failed"
+    )
+    warnings: List[str] = Field(
+        default_factory=list, description="Configuration problems no step failed on, e.g. a frame the outputs deny"
     )
     reported_vehicle: Optional[str] = Field(
         None, description="Vehicle type the autopilot reports over MAVLink once reconfigured"

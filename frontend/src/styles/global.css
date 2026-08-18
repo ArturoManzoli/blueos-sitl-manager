@@ -8,15 +8,6 @@
    controls are built from live nowhere else. */
 @source "../../node_modules/@bluerobotics/bluevue/dist";
 
-/* The two tokens this extension restates. Everything else the package ships is taken as it
-   comes; these two describe a blue chosen against the backdrop painted below, so a slider
-   pill or a selected segment sits on it without disappearing into it. */
-:root {
-  --bluevue-primary: #0A4B6B;
-  /* Focus ring: the primary again, lifted until it reads against a dark inset. */
-  --bluevue-accent: #3FA3CC;
-}
-
 /* The page itself is BlueApp's, which paints the backdrop the card sits on; these two only make
    sure the document it is mounted in fills the iframe it is served in. */
 html,

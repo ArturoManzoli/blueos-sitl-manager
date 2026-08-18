@@ -455,7 +455,6 @@ async function applyLocation(): Promise<void> {
            is the same work on any board. -->
       <BlueButton
         variant="filled"
-        density="compact"
         theme="dark"
         :loading="busy"
         :disabled="!isSitl || !pendingChange || fetching"

@@ -89,6 +89,21 @@ DYNAMICS_PARAMS: Tuple[str, ...] = (
 DYNAMICS_PREFIXES: Tuple[str, ...] = ("ACRO_", "ATC_", "MOT_", "WP_")
 
 
+# ArduPilot reads an accelerometer whose offsets are all zero and whose scales are all one as
+# uncalibrated and refuses to arm on it, which is why every SITL parameter file ArduPilot
+# ships carries these placeholders. A firmware install starts the vehicle from empty parameter
+# storage, so a configuration that brings no calibration of its own is written these. Only the
+# two instances SITL registers are covered, and deliberately: the same check also fails on a
+# calibration that exists for an accelerometer the vehicle does not have, so writing a third
+# instance leaves the vehicle exactly as unarmable as writing none.
+SITL_ACCEL_CALIBRATION: Dict[str, float] = {
+    f"INS_ACC{instance}{quantity}_{axis}": value
+    for instance in ("", "2")
+    for quantity, value in (("OFFS", 0.001), ("SCAL", 1.001))
+    for axis in ("X", "Y", "Z")
+}
+
+
 def _is_hardware_param(name: str) -> bool:
     return name in HARDWARE_PARAMS or name.startswith(HARDWARE_PREFIXES) or name.endswith(HARDWARE_SUFFIXES)
 
@@ -282,12 +297,60 @@ LOCATION_PRESETS: List[LocationPreset] = [
     ),
 ]
 
+THROTTLE_LEFT, THROTTLE_RIGHT = 73, 74
+GROUND_STEERING, THROTTLE = 26, 70
+
+# What each SITL frame makes of servo outputs 1 and 3. A skid frame reads them as the left and
+# right motors and takes yaw from their difference, a steered one as ground steering and
+# throttle, so a vehicle whose outputs are set for the other pairing drives in circles instead
+# of holding a heading. Sailboats are left out, since their outputs carry a mainsail too and
+# there is no single pairing to state.
+FRAME_OUTPUTS: Dict[str, Dict[str, int]] = {
+    "motorboat-skid": {"SERVO1_FUNCTION": THROTTLE_LEFT, "SERVO3_FUNCTION": THROTTLE_RIGHT},
+    "rover-skid": {"SERVO1_FUNCTION": THROTTLE_LEFT, "SERVO3_FUNCTION": THROTTLE_RIGHT},
+    "motorboat": {"SERVO1_FUNCTION": GROUND_STEERING, "SERVO3_FUNCTION": THROTTLE},
+    "rover": {"SERVO1_FUNCTION": GROUND_STEERING, "SERVO3_FUNCTION": THROTTLE},
+}
+
+# The oldest firmware whose simulation model steers a frame at all, for the frames that were
+# broken until a known fix. ArduPilot's skid-steered boats yawed only at exactly zero speed,
+# which a boat in water never reaches, and otherwise in proportion to speed and with its sign,
+# so a waypoint turn rotated whichever way the hull was drifting; the fix landed on master after
+# 4.7 branched. A frame named here is installed with a build new enough to run it, which is the
+# development build until the version below is released as stable, and the entry can go then.
+FRAME_MINIMUM_FIRMWARE: Dict[str, str] = {"motorboat-skid": "4.8.0"}
+
 # The Blue Robotics presets are composed from the parameter layers Blue Robotics ships in
 # bluerobotics/Blueos-Parameter-Repository, vendored under data/vendor. Each vehicle is
 # built the way that repository composes it — shared hardware, then the vehicle, then its
 # SITL overlay — so the simulated vehicle is configured like the real product wherever the
 # simulator does not need something else. The SITL --frame supplies the hydrodynamics.
 BLUEBOAT_LAYERS = ([DATA_DIR / "blueboat.params"], [VENDOR_DIR / "rover_sitl.params"])
+
+# Two ways the simulated hull is not the real one. Both describe the thrusters rather than the
+# driving tune, so the simulator is told what it actually has and the product's gains still fly it.
+SITL_HULL_OVERRIDES: Dict[str, float] = {
+    # A T200 pushes about 1.6 times harder forward than in reverse, and MOT_THST_ASYM tells the skid
+    # mixer to boost whichever motor is reversing so that the pair still balances. Simulated thrust
+    # is linear both ways, so on the reversing side that boost is thrust the hull really gets: a
+    # pivot commanded as -100% and +62.5% leaves 37.5% of full thrust pushing astern, and the boat
+    # backs out of every waypoint it pivots around, about 11 m off a 30 m leg before it recovers.
+    "MOT_THST_ASYM": 1.0,
+    # The marine model yaws a skid boat at 0.44 rad/s per unit of steering output, the two throttles
+    # spanning 1.6 of the model's units and each unit turning it at pi * 5 deg/s, where the real
+    # hull's thrusters are several times stronger. ATC_STR_RAT_FF is the inverse of that gain, so
+    # the shipped 0.8 leaves the simulated boat pivoting at 9 deg/s of the 15 WP_PIVOT_RATE asks
+    # for, with no integrator to close the gap: 11 s a corner instead of 6, and a metre of extra
+    # overshoot leaving it. Feeding forward the gain the simulated hull has pivots at the rate the
+    # product asks for.
+    "ATC_STR_RAT_FF": 2.3,
+}
+# Nothing on a BlueROV2 measures where it is, so the vehicle layer names no horizontal position
+# source and ArduSub holds the EKF in constant-position mode: the vehicle never appears on the map,
+# and every mission mode is refused with "requires position". A simulated ROV has SITL's GPS
+# whatever its depth, so the EKF is pointed at it and AUTO, GUIDED and RTL work as they would on a
+# vehicle carrying a DVL or surfacing for a fix.
+SITL_SUB_POSITIONING: Dict[str, float] = {"EK3_SRC1_POSXY": 3}
 BLUEROV2_LAYERS = (
     [VENDOR_DIR / "sub_power_sense_module.params", VENDOR_DIR / "sub_base.params", VENDOR_DIR / "sub_standard.params"],
     [VENDOR_DIR / "sub_sitl_standard.params"],
@@ -304,21 +367,21 @@ VEHICLE_PRESETS: List[VehiclePreset] = [
         vehicle=Vehicle.ROVER,
         # Marine hydrodynamics with differential thrust, matching the hull's two thrusters.
         frame="motorboat-skid",
-        parameters=compose_params(*BLUEBOAT_LAYERS),
+        parameters={**compose_params(*BLUEBOAT_LAYERS), **SITL_HULL_OVERRIDES},
     ),
     VehiclePreset(
         name="BlueROV2",
         description="Blue Robotics BlueROV2 — 6-thruster vectored ROV (ArduSub).",
         vehicle=Vehicle.SUB,
         frame="vectored",
-        parameters=compose_params(*BLUEROV2_LAYERS),
+        parameters={**compose_params(*BLUEROV2_LAYERS), **SITL_SUB_POSITIONING},
     ),
     VehiclePreset(
         name="BlueROV2 Heavy",
         description="Blue Robotics BlueROV2 Heavy — 8-thruster fully vectored 6-DOF ROV (ArduSub).",
         vehicle=Vehicle.SUB,
         frame="vectored_6dof",
-        parameters=compose_params(*BLUEROV2_HEAVY_LAYERS),
+        parameters={**compose_params(*BLUEROV2_HEAVY_LAYERS), **SITL_SUB_POSITIONING},
     ),
     # Generic (non Blue Robotics) ArduPilot vehicles for aerial and ground SITL work.
     # FRAME_CLASS keeps each one distinct from the marine presets above: a ground rover
@@ -403,3 +466,10 @@ def all_location_presets() -> List[LocationPreset]:
     from sitl_manager.custom_presets import LOCATION_STORE
 
     return _merge_presets(LOCATION_PRESETS, LOCATION_STORE.list())
+
+
+def all_environment_presets() -> List[EnvironmentPreset]:
+    """Built-in ambient conditions, any edits to them applied, then the user's own."""
+    from sitl_manager.custom_presets import ENVIRONMENT_STORE
+
+    return _merge_presets(ENVIRONMENT_PRESETS, ENVIRONMENT_STORE.list())

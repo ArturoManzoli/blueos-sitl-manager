@@ -26,7 +26,13 @@ from sitl_manager.models import (
     Vehicle,
     VehiclePreset,
 )
-from sitl_manager.presets import DEFAULT_SPAWN_BY_FIELD, LOCATION_PARAM_MAP
+from sitl_manager.presets import (
+    DEFAULT_SPAWN_BY_FIELD,
+    FRAME_MINIMUM_FIRMWARE,
+    FRAME_OUTPUTS,
+    LOCATION_PARAM_MAP,
+    SITL_ACCEL_CALIBRATION,
+)
 from sitl_manager.settings import REBUILD_READY_TIMEOUT, VEHICLE_READY_TIMEOUT
 
 STEP_VEHICLE = "vehicle"
@@ -53,12 +59,12 @@ PARAM_ATTEMPTS = 2
 # Long enough for the autopilot being replaced to fall silent before its successor is looked for.
 RESTART_SETTLE = 2.0
 
-# Reading the spawn location holds up a vehicle change that is about to take minutes, so each
-# parameter gets a short wait — asked again a few times, since an answer lost to another
-# client's read is not a parameter without a value — before it is treated as unreadable. An
-# autopilot that answers for none of the four spends eighteen seconds of that change here.
-SPAWN_READ_TIMEOUT = 1.5
-SPAWN_READ_ATTEMPTS = 3
+# Reading a parameter here holds up a vehicle change that is about to take minutes, so each one
+# gets a short wait — asked again a few times, since an answer lost to another client's read is
+# not a parameter without a value — before it is treated as unreadable. An autopilot that
+# answers for none of the four spawn parameters spends eighteen seconds of that change here.
+PARAM_READ_TIMEOUT = 1.5
+PARAM_READ_ATTEMPTS = 3
 
 
 class _Request(NamedTuple):
@@ -94,9 +100,11 @@ _StageFn = Callable[[ApplyJob, _Request, _Progress], Awaitable[None]]
 
 _job: Optional[ApplyJob] = None
 _request: Optional[_Request] = None
-# The spawn location carried across a firmware install. Belongs to the job rather than to a
-# single run of it, so a retry that resumes at the parameters step still writes it back.
-_carried_spawn: Dict[str, float] = {}
+# What a firmware install takes away and the parameter step has to put back: the spawn location
+# read off the outgoing firmware, and the placeholder accelerometer calibration that empty
+# parameter storage lacks. Belongs to the job rather than to a single run of it, so a retry that
+# resumes at the parameters step still writes it back.
+_carried: Dict[str, float] = {}
 _task: Optional["asyncio.Task[None]"] = None
 _tasks: Set["asyncio.Task[None]"] = set()
 _next_id = 1
@@ -157,7 +165,7 @@ async def _read_spawn() -> Dict[str, float]:
     """
     spawn: Dict[str, float] = {}
     for field_name, param in LOCATION_PARAM_MAP.items():
-        value = await mavlink.get_param(param, timeout=SPAWN_READ_TIMEOUT, attempts=SPAWN_READ_ATTEMPTS)
+        value = await mavlink.get_param(param, timeout=PARAM_READ_TIMEOUT, attempts=PARAM_READ_ATTEMPTS)
         spawn[param] = DEFAULT_SPAWN_BY_FIELD[field_name] if value is None else value
 
     latitude, longitude = LOCATION_PARAM_MAP["latitude"], LOCATION_PARAM_MAP["longitude"]
@@ -167,7 +175,22 @@ async def _read_spawn() -> Dict[str, float]:
     return spawn
 
 
-async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
+async def _new_enough(minimum: Optional[str]) -> bool:
+    """Whether the running firmware carries a fix that the frame about to run needs.
+
+    An unreadable version counts as too old: reinstalling costs a download, while keeping a
+    build whose simulation model cannot steer costs a vehicle that does not navigate.
+    """
+    if minimum is None:
+        return True
+    running = await mavlink.get_autopilot_version()
+    if autopilot.is_at_least(running, minimum):
+        return True
+    logger.info(f"The vehicle runs {running}, older than the {minimum} this frame needs")
+    return False
+
+
+async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle, frame: Optional[str]) -> bool:
     """Install the firmware for a vehicle type. Returns whether anything was installed.
 
     Looking up the build is reported apart from fetching it because the lookup goes out to
@@ -175,18 +198,23 @@ async def _apply_vehicle(job: ApplyJob, vehicle: Vehicle) -> bool:
     otherwise a long silence on a step that claims to be downloading.
     """
     _begin(job, STEP_VEHICLE, f"Checking the installed {vehicle.value} firmware")
+    # A request only names the frame when it is changing, so what decides which build is needed
+    # is the frame the vehicle ends up on: one whose model was broken until a known release
+    # needs the build that fixes it even when the frame itself is staying where it is.
+    minimum = FRAME_MINIMUM_FIRMWARE.get(frame or await autopilot.get_sitl_frame() or "")
     current = await autopilot.get_firmware_vehicle_type()
-    if current and vehicle.value.lower() in str(current).lower():
+    if current and vehicle.value.lower() in str(current).lower() and await _new_enough(minimum):
         _finish(job, STEP_VEHICLE, f"Already running {current}", state=StepState.SKIPPED)
         return False
     # Read before installing: the new firmware gets its own parameter storage, so the spawn
-    # location the user picked is about to revert to SIM_OPOS's zeroes. Written back with the
-    # preset's own parameters below, where the rebuild restart is what brings the vehicle up
-    # in the right place.
-    global _carried_spawn  # noqa: PLW0603 - one autopilot, one job
-    _carried_spawn = await _read_spawn()
-    _begin(job, STEP_VEHICLE, f"Looking up the latest stable {vehicle.value} build")
-    firmware = await autopilot.latest_stable_firmware(vehicle)
+    # location the user picked is about to revert to SIM_OPOS's zeroes, and the accelerometer
+    # calibration that lets a simulated vehicle arm at all is about to be gone with it. Both
+    # are written back with the preset's own parameters below, where the rebuild restart is
+    # what brings the vehicle up in the right place.
+    global _carried  # noqa: PLW0603 - one autopilot, one job
+    _carried = {**SITL_ACCEL_CALIBRATION, **await _read_spawn()}
+    _begin(job, STEP_VEHICLE, f"Looking up the {vehicle.value} build to install")
+    firmware = await autopilot.firmware_to_install(vehicle, minimum)
     name = str(firmware["name"])
     logger.info(f"Installing {name} for {vehicle.value}")
     _begin(job, STEP_VEHICLE, f"Downloading and installing {name}")
@@ -230,14 +258,24 @@ async def _boot(job: ApplyJob, key: str, restart: bool, detail: str, timeout: fl
     _finish(job, key, "Autopilot online")
 
 
+def _changed(counts: Dict[str, int]) -> int:
+    """How many parameters the vehicle did not already hold and was therefore written.
+
+    What the rebuild restart exists for, so a write whose read-back went missing counts here:
+    the value it carried is not the one the vehicle had, and a restart that hinged on an answer
+    another client can carry off would skip the rebuild the new values need.
+    """
+    return counts.get(ParamOutcome.WRITTEN.value, 0) + counts.get(ParamOutcome.UNCONFIRMED.value, 0)
+
+
 async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
     """Write the parameters that differ from what the vehicle already holds.
 
     One parameter dump up front tells us which values are already correct, which is far
     quicker than reading them back one at a time and makes re-applying a preset almost
-    instant. A dump can drop packets, so a name it does not mention is still written and
-    read back rather than assumed missing — only a parameter that never answers a read is
-    reported as unsupported by this firmware.
+    instant. A dump can drop packets, so a name it does not mention is read on its own rather
+    than assumed missing — only a parameter that answers neither the dump, nor that read, nor
+    the write that follows is reported as unsupported by this firmware.
     """
     # Cleared rather than appended to, so retrying this step reports one pass, not two.
     job.records.clear()
@@ -249,23 +287,31 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
     if not onboard:
         logger.warning("Parameter dump came back empty; every parameter will be written and verified")
 
-    written = 0
     for name, value in params.items():
         target = float(value)
         job.current_param = name
         _begin(job, STEP_PARAMETERS, f"Sending parameter {job.params_done + 1}/{job.params_total}: {name}")
 
         current = onboard.get(name)
+        if current is None:
+            # A name the dump dropped is one nothing is known about yet, so it is asked for
+            # before being written: a value that already matches then costs neither a write nor
+            # the restart that a write would earn, and silence here is the first sign of a
+            # firmware that does not have the parameter at all.
+            current = await mavlink.get_param(name, timeout=PARAM_READ_TIMEOUT, attempts=PARAM_READ_ATTEMPTS)
         if current is not None and mavlink.values_match(current, target):
             _record(job, name, target, ParamOutcome.UNCHANGED)
             continue
 
         readback = await mavlink.set_param_verified(name, target, attempts=PARAM_ATTEMPTS)
         if readback is None:
-            _record(job, name, target, ParamOutcome.UNSUPPORTED)
+            # Only the write's own echo can settle that read, and a vehicle with nothing to
+            # change may send none, so silence alone does not mean the name is missing. What
+            # does is silence from a name that answered neither the dump nor a read of its own.
+            missing = current is None
+            _record(job, name, target, ParamOutcome.UNSUPPORTED if missing else ParamOutcome.UNCONFIRMED)
             continue
         if mavlink.values_match(readback, target):
-            written += 1
             _record(job, name, target, ParamOutcome.WRITTEN)
         else:
             logger.warning(f"{name} read back as {readback} after writing {target}")
@@ -274,7 +320,7 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
     job.current_param = None
     summary = ", ".join(f"{count} {outcome}" for outcome, count in sorted(job.counts.items()))
     _finish(job, STEP_PARAMETERS, summary or "No parameters to send")
-    return written
+    return _changed(job.counts)
 
 
 def _expected_vehicle_type(vehicle: Optional[Vehicle], params: Dict[str, float]) -> Optional[str]:
@@ -290,6 +336,36 @@ def _expected_vehicle_type(vehicle: Optional[Vehicle], params: Dict[str, float])
     if vehicle is Vehicle.ROVER:
         return "Surface Boat" if params.get("FRAME_CLASS") == 2 else "Ground Rover"
     return None
+
+
+async def _output_mismatch(frame: Optional[str]) -> Optional[str]:
+    """What is wrong between a frame and the outputs it drives, or None when they agree.
+
+    Nothing enforces this pairing: the frame decides what the simulator makes of outputs 1 and
+    3, the SERVO*_FUNCTION parameters decide what the autopilot puts on them, and a
+    configuration that gets them the wrong way round drives in circles while every step of the
+    job reports success. A frame chosen by hand is exactly how that happens, since it changes
+    the physics without touching the parameters.
+    """
+    wanted = FRAME_OUTPUTS.get(frame or "")
+    if wanted is None:
+        return None
+    try:
+        actual = {
+            name: await mavlink.get_param(name, timeout=PARAM_READ_TIMEOUT, attempts=PARAM_READ_ATTEMPTS)
+            for name in wanted
+        }
+    except Exception as error:  # noqa: BLE001 - an advisory read must not fail the job
+        logger.debug(f"Could not read the output functions: {error}")
+        return None
+    wrong = ", ".join(
+        f"{name} is {round(value)} rather than {wanted[name]}"
+        for name, value in actual.items()
+        if value is not None and round(value) != wanted[name]
+    )
+    if not wrong:
+        return None
+    return f"{frame} does not match the vehicle's outputs ({wrong}), so it will not steer. A preset sets them."
 
 
 async def _verify(job: ApplyJob, expected: Optional[str]) -> None:
@@ -314,7 +390,7 @@ async def _stage_vehicle(job: ApplyJob, request: "_Request", progress: "_Progres
     if request.vehicle is None:
         _finish(job, STEP_VEHICLE, "Unchanged", state=StepState.SKIPPED)
         return
-    progress.installed = await _apply_vehicle(job, request.vehicle)
+    progress.installed = await _apply_vehicle(job, request.vehicle, request.frame)
 
 
 async def _stage_frame(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
@@ -328,16 +404,20 @@ async def _stage_boot(job: ApplyJob, request: "_Request", progress: "_Progress")
     if not progress.wanted(STEP_BOOT, progress.installed or progress.frame_changed):
         _finish(job, STEP_BOOT, "No restart needed", state=StepState.SKIPPED)
         return
-    # A firmware install restarts the autopilot on its own.
-    await _boot(job, STEP_BOOT, restart=not progress.installed, detail="Waiting for the autopilot to come back")
+    # A firmware install restarts the autopilot on its own, but it does so before the step
+    # above persisted the frame, and ArduPilot Manager only reads the frame while starting
+    # SITL. A frame that changed therefore needs a restart of its own even then, or the
+    # simulator keeps running the model the user just replaced.
+    restart = progress.frame_changed or not progress.installed
+    await _boot(job, STEP_BOOT, restart=restart, detail="Waiting for the autopilot to come back")
 
 
 async def _stage_parameters(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
-    # The spawn location read before the install rides along with the preset's parameters:
-    # it is a parameter like any other, and sending it here means the rebuild restart is what
-    # applies it, rather than a third reboot. Already-correct values cost nothing, since the
-    # write only happens where the vehicle disagrees.
-    params = {**request.params, **_carried_spawn}
+    # What the install took away rides along with the preset's parameters: each is a parameter
+    # like any other, and sending them here means the rebuild restart is what applies them,
+    # rather than a third reboot. Already-correct values cost nothing, since the write only
+    # happens where the vehicle disagrees.
+    params = {**request.params, **_carried}
     if not params:
         _finish(job, STEP_PARAMETERS, "No parameters to send", state=StepState.SKIPPED)
         return
@@ -359,7 +439,13 @@ async def _stage_rebuild(job: ApplyJob, request: "_Request", progress: "_Progres
 
 
 async def _stage_verify(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
+    # Cleared rather than appended to, so retrying this step reports one pass, not two.
+    job.warnings.clear()
     await _verify(job, _expected_vehicle_type(request.vehicle, request.params))
+    mismatch = await _output_mismatch(await autopilot.get_sitl_frame())
+    if mismatch is not None:
+        logger.warning(mismatch)
+        job.warnings.append(mismatch)
 
 
 # In dependency order: firmware, then the frame it runs, then the reboot that loads both,
@@ -398,6 +484,8 @@ def _settle(job: ApplyJob) -> None:
     job.detail = f"{job.title} applied."
     if job.skipped:
         job.detail = f"{job.title} applied, skipped: {', '.join(job.skipped)}."
+    if job.warnings:
+        job.detail = " ".join([job.detail, *job.warnings])
 
 
 async def _run(job: ApplyJob, request: "_Request", progress: "_Progress", start: int = 0) -> None:
@@ -425,13 +513,13 @@ def _start(
     frame: Optional[str],
     params: Dict[str, float],
 ) -> ApplyJob:
-    global _job, _request, _task, _next_id, _carried_spawn  # noqa: PLW0603 - one autopilot, one job
+    global _job, _request, _task, _next_id, _carried  # noqa: PLW0603 - one autopilot, one job
 
     if is_running():
         raise JobBusyError("Another configuration change is still running.")
 
     # Belongs to the job about to start, not to the one before it.
-    _carried_spawn = {}
+    _carried = {}
 
     job = ApplyJob(
         id=_next_id,
@@ -472,7 +560,7 @@ def _resume(job: ApplyJob, start: int) -> ApplyJob:
         # so a restart step running now has to issue its own.
         installed=False,
         frame_changed=_step(job, STEP_FRAME).state is StepState.DONE,
-        written=job.counts.get(ParamOutcome.WRITTEN.value, 0),
+        written=_changed(job.counts),
         forced=_STAGES[start][0] if start < len(_STAGES) else None,
     )
     for key, _ in _STAGES[start:]:

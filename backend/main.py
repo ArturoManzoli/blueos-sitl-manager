@@ -9,9 +9,10 @@ from fastapi_versioning import VersionedFastAPI
 from loguru import logger
 from uvicorn import Config, Server
 
-from sitl_manager import __version__
+from sitl_manager import __version__, power
 from sitl_manager.api.v1.routers.environment import environment_router
 from sitl_manager.api.v1.routers.location import location_router
+from sitl_manager.api.v1.routers.power import power_router
 from sitl_manager.api.v1.routers.vehicle import vehicle_router
 from sitl_manager.http import close_session
 from sitl_manager.settings import PORT, SERVICE_NAME, STATIC_DIR
@@ -25,6 +26,7 @@ fast_api_app = FastAPI(
 )
 fast_api_app.include_router(environment_router)
 fast_api_app.include_router(location_router)
+fast_api_app.include_router(power_router)
 fast_api_app.include_router(vehicle_router)
 
 app = VersionedFastAPI(fast_api_app, version="1.0.0", prefix_format="/v{major}.{minor}", enable_latest=True)
@@ -46,8 +48,14 @@ def register_service() -> Dict[str, Any]:
     }
 
 
+@app.on_event("startup")
+async def _on_startup() -> None:
+    await power.resume()
+
+
 @app.on_event("shutdown")
 async def _on_shutdown() -> None:
+    await power.shutdown()
     await close_session()
 
 
