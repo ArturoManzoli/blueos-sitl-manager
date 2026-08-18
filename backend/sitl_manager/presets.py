@@ -345,6 +345,12 @@ SITL_HULL_OVERRIDES: Dict[str, float] = {
     # product asks for.
     "ATC_STR_RAT_FF": 2.3,
 }
+# Nothing on a BlueROV2 measures where it is, so the vehicle layer names no horizontal position
+# source and ArduSub holds the EKF in constant-position mode: the vehicle never appears on the map,
+# and every mission mode is refused with "requires position". A simulated ROV has SITL's GPS
+# whatever its depth, so the EKF is pointed at it and AUTO, GUIDED and RTL work as they would on a
+# vehicle carrying a DVL or surfacing for a fix.
+SITL_SUB_POSITIONING: Dict[str, float] = {"EK3_SRC1_POSXY": 3}
 BLUEROV2_LAYERS = (
     [VENDOR_DIR / "sub_power_sense_module.params", VENDOR_DIR / "sub_base.params", VENDOR_DIR / "sub_standard.params"],
     [VENDOR_DIR / "sub_sitl_standard.params"],
@@ -368,14 +374,14 @@ VEHICLE_PRESETS: List[VehiclePreset] = [
         description="Blue Robotics BlueROV2 — 6-thruster vectored ROV (ArduSub).",
         vehicle=Vehicle.SUB,
         frame="vectored",
-        parameters=compose_params(*BLUEROV2_LAYERS),
+        parameters={**compose_params(*BLUEROV2_LAYERS), **SITL_SUB_POSITIONING},
     ),
     VehiclePreset(
         name="BlueROV2 Heavy",
         description="Blue Robotics BlueROV2 Heavy — 8-thruster fully vectored 6-DOF ROV (ArduSub).",
         vehicle=Vehicle.SUB,
         frame="vectored_6dof",
-        parameters=compose_params(*BLUEROV2_HEAVY_LAYERS),
+        parameters={**compose_params(*BLUEROV2_HEAVY_LAYERS), **SITL_SUB_POSITIONING},
     ),
     # Generic (non Blue Robotics) ArduPilot vehicles for aerial and ground SITL work.
     # FRAME_CLASS keeps each one distinct from the marine presets above: a ground rover

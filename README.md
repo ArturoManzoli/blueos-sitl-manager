@@ -106,6 +106,14 @@ Heavy (2, vectored 6-DOF). These only rebuild the motor matrix on the next boot,
 applying a preset restarts the autopilot and then confirms the vehicle type it reports
 over MAVLink actually matches — a BlueBoat has to come back as a Surface Boat.
 
+Both ROVs are given the one thing the real vehicle cannot carry: a position. Nothing on a BlueROV2
+measures where it is, so the vehicle layer names no horizontal position source and ArduSub holds the
+EKF in constant-position mode, which leaves the vehicle off the map and every mission mode refused
+with "requires position". A simulated ROV has SITL's GPS at any depth, so `EK3_SRC1_POSXY` is
+pointed at it and AUTO, GUIDED and RTL run as they would on a vehicle carrying a DVL or surfacing
+for a fix. Each rides the hull that matches its thrusters: `vectored` for the BlueROV2's six,
+`vectored_6dof` for the Heavy's eight.
+
 Picking a preset only fills the vehicle type and frame selectors with what it describes;
 "Apply and restart" is what writes any of it. A selector changed by hand moves the row to
 **Custom**, which is the scratch entry: any pairing of vehicle type and frame can be tried
