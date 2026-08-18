@@ -61,8 +61,24 @@ every corner for a skid-steered vehicle as a stop and a pivot. A waypoint turn t
 rotated whichever way the hull was drifting and only came right once the heading error had
 wrapped past 180 degrees. Applying the preset installs a build that has the fix, which is the
 development build while 4.7 is the newest stable one, and goes back to stable of its own accord
-once 4.8 is released. On a fixed hull the product's own steering gains fly it as they are, so
-nothing about how a BlueBoat drives is tuned for the simulator.
+once 4.8 is released.
+
+The preset drives the hull on the product's own speeds, accelerations and turn geometry, and
+overrides two values that describe the thrusters instead. A T200 pushes about 1.6 times harder
+forward than in reverse, and `MOT_THST_ASYM` tells the skid mixer to boost whichever motor is
+reversing so the pair still balances. Simulated thrust is linear both ways, so on the reversing side
+that boost is thrust the hull really gets. A pivot turn, which is how ArduRover takes every corner
+past 45 degrees, comes out as -100% on one motor against +62.5% on the other: 37.5% of full thrust
+pushing astern, enough to back the boat about 11 m off a 30 m leg at every waypoint before it
+recovers. The preset writes the symmetry the simulated thrusters actually have, 1.0.
+
+The other is how hard those thrusters turn the hull. The marine model yaws a skid boat at 0.44 rad/s
+per unit of steering output, where the real thrusters are several times stronger, and
+`ATC_STR_RAT_FF` is the inverse of exactly that gain. Left at the product's 0.8, and with the
+integrator the BlueBoat ships switched off, the steering loop settles at 9 deg/s of the 15 that
+`WP_PIVOT_RATE` asks for: every corner takes 11 seconds instead of 6, and the boat leaves it a metre
+wider. Feeding forward the gain the simulated hull has pivots it at the rate the product asks for,
+with the loop still at a third of the available thrust.
 
 Vehicle layers are dumps from real boards, so two families of parameters are dropped from
 them rather than written. The vendor `blacklist.txt` covers per-board calibration (compass
@@ -77,7 +93,7 @@ from empty parameter storage, so those offsets are written for a configuration t
 none of its own too, alongside the spawn location the install took with it.
 
 Outputs follow the simulator's wiring rather than the product's where the two differ.
-`SIM_Rover` takes output 1 as the left motor and output 3 as the right one and derives yaw
+Every skid model takes output 1 as the left motor and output 3 as the right one and derives yaw
 from their difference, while a shipped BlueBoat puts the right thruster on output 1 and
 reverses output 3 to suit how it is mounted. Since the reversal is one of the hardware
 settings dropped above, keeping the product's order would leave the steering loop inverted
@@ -142,7 +158,8 @@ to change:
   initialise on a still platform, so a boat sitting on the surface stays flat and stays put
   no matter what is set. Arm it and the water starts working.
 - **The frame must be a boat.** Both live in ArduPilot's sailboat model, which backs the
-  `motorboat*` and `sailboat*` frames only.
+  `motorboat*` and `sailboat*` frames only. The BlueBoat preset is one of them, so waves and
+  current reach it; a rover or a sub feels neither.
 
 Wind is just as particular, because the frame picks the simulation model:
 

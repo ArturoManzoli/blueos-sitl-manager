@@ -326,6 +326,25 @@ FRAME_MINIMUM_FIRMWARE: Dict[str, str] = {"motorboat-skid": "4.8.0"}
 # SITL overlay — so the simulated vehicle is configured like the real product wherever the
 # simulator does not need something else. The SITL --frame supplies the hydrodynamics.
 BLUEBOAT_LAYERS = ([DATA_DIR / "blueboat.params"], [VENDOR_DIR / "rover_sitl.params"])
+
+# Two ways the simulated hull is not the real one. Both describe the thrusters rather than the
+# driving tune, so the simulator is told what it actually has and the product's gains still fly it.
+SITL_HULL_OVERRIDES: Dict[str, float] = {
+    # A T200 pushes about 1.6 times harder forward than in reverse, and MOT_THST_ASYM tells the skid
+    # mixer to boost whichever motor is reversing so that the pair still balances. Simulated thrust
+    # is linear both ways, so on the reversing side that boost is thrust the hull really gets: a
+    # pivot commanded as -100% and +62.5% leaves 37.5% of full thrust pushing astern, and the boat
+    # backs out of every waypoint it pivots around, about 11 m off a 30 m leg before it recovers.
+    "MOT_THST_ASYM": 1.0,
+    # The marine model yaws a skid boat at 0.44 rad/s per unit of steering output, the two throttles
+    # spanning 1.6 of the model's units and each unit turning it at pi * 5 deg/s, where the real
+    # hull's thrusters are several times stronger. ATC_STR_RAT_FF is the inverse of that gain, so
+    # the shipped 0.8 leaves the simulated boat pivoting at 9 deg/s of the 15 WP_PIVOT_RATE asks
+    # for, with no integrator to close the gap: 11 s a corner instead of 6, and a metre of extra
+    # overshoot leaving it. Feeding forward the gain the simulated hull has pivots at the rate the
+    # product asks for.
+    "ATC_STR_RAT_FF": 2.3,
+}
 BLUEROV2_LAYERS = (
     [VENDOR_DIR / "sub_power_sense_module.params", VENDOR_DIR / "sub_base.params", VENDOR_DIR / "sub_standard.params"],
     [VENDOR_DIR / "sub_sitl_standard.params"],
@@ -342,7 +361,7 @@ VEHICLE_PRESETS: List[VehiclePreset] = [
         vehicle=Vehicle.ROVER,
         # Marine hydrodynamics with differential thrust, matching the hull's two thrusters.
         frame="motorboat-skid",
-        parameters=compose_params(*BLUEBOAT_LAYERS),
+        parameters={**compose_params(*BLUEBOAT_LAYERS), **SITL_HULL_OVERRIDES},
     ),
     VehiclePreset(
         name="BlueROV2",
