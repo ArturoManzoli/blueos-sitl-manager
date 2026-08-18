@@ -11,6 +11,7 @@ from sitl_manager.settings import (
     FIRMWARE_INSTALL_TIMEOUT,
     FIRMWARE_LIST_TIMEOUT,
     HTTP_TIMEOUT,
+    RESTART_TIMEOUT,
 )
 
 
@@ -111,7 +112,8 @@ async def set_sitl_frame(frame: str) -> None:
 
 
 async def restart() -> None:
-    await _post("/restart")
+    # Answered only once the autopilot is back up, which outlasts a normal API call.
+    await _post("/restart", timeout=RESTART_TIMEOUT)
 
 
 async def available_firmwares(vehicle: Vehicle) -> List[Dict[str, Any]]:

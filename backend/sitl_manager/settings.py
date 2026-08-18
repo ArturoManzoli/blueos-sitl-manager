@@ -70,6 +70,11 @@ REBUILD_READY_TIMEOUT = float(os.environ.get("SITL_REBUILD_READY_TIMEOUT", str(V
 # normal API call; it needs its own timeout so it is not killed by HTTP_TIMEOUT.
 FIRMWARE_INSTALL_TIMEOUT = float(os.environ.get("SITL_FIRMWARE_INSTALL_TIMEOUT", "300"))
 
+# ArduPilot Manager stops the autopilot and waits for it to come back before answering a
+# restart, which measured over 10 seconds on a Raspberry Pi. Under HTTP_TIMEOUT the request is
+# abandoned mid-restart and reported as a failure, while the vehicle comes up regardless.
+RESTART_TIMEOUT = float(os.environ.get("SITL_RESTART_TIMEOUT", "60"))
+
 # Listing the builds for a vehicle sends ArduPilot Manager to ArduPilot's firmware index
 # over the internet, which measured 14 to 41 seconds from a Raspberry Pi. Generous enough to
 # survive a slow link, since giving up here fails the whole vehicle change.
