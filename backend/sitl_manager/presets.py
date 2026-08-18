@@ -297,6 +297,21 @@ LOCATION_PRESETS: List[LocationPreset] = [
     ),
 ]
 
+THROTTLE_LEFT, THROTTLE_RIGHT = 73, 74
+GROUND_STEERING, THROTTLE = 26, 70
+
+# What each SITL frame makes of servo outputs 1 and 3. A skid frame reads them as the left and
+# right motors and takes yaw from their difference, a steered one as ground steering and
+# throttle, so a vehicle whose outputs are set for the other pairing drives in circles instead
+# of holding a heading. Sailboats are left out, since their outputs carry a mainsail too and
+# there is no single pairing to state.
+FRAME_OUTPUTS: Dict[str, Dict[str, int]] = {
+    "motorboat-skid": {"SERVO1_FUNCTION": THROTTLE_LEFT, "SERVO3_FUNCTION": THROTTLE_RIGHT},
+    "rover-skid": {"SERVO1_FUNCTION": THROTTLE_LEFT, "SERVO3_FUNCTION": THROTTLE_RIGHT},
+    "motorboat": {"SERVO1_FUNCTION": GROUND_STEERING, "SERVO3_FUNCTION": THROTTLE},
+    "rover": {"SERVO1_FUNCTION": GROUND_STEERING, "SERVO3_FUNCTION": THROTTLE},
+}
+
 # The oldest firmware whose simulation model steers a frame at all, for the frames that were
 # broken until a known fix. ArduPilot's skid-steered boats yawed only at exactly zero speed,
 # which a boat in water never reaches, and otherwise in proportion to speed and with its sign,

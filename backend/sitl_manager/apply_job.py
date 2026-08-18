@@ -29,6 +29,7 @@ from sitl_manager.models import (
 from sitl_manager.presets import (
     DEFAULT_SPAWN_BY_FIELD,
     FRAME_MINIMUM_FIRMWARE,
+    FRAME_OUTPUTS,
     LOCATION_PARAM_MAP,
     SITL_ACCEL_CALIBRATION,
 )
@@ -335,21 +336,6 @@ def _expected_vehicle_type(vehicle: Optional[Vehicle], params: Dict[str, float])
     if vehicle is Vehicle.ROVER:
         return "Surface Boat" if params.get("FRAME_CLASS") == 2 else "Ground Rover"
     return None
-
-
-# What ArduPilot's rover simulation makes of servo outputs 1 and 3, per SITL frame. A skid
-# frame reads them as the left and right motor and derives yaw from their difference, while a
-# steered one takes ground steering and throttle, so a vehicle whose outputs are set for the
-# other pairing turns in circles instead of holding a heading. Sailboats are left out: their
-# outputs carry a mainsail too, so there is no single pairing to check against.
-_SKID_OUTPUTS = {"SERVO1_FUNCTION": 73, "SERVO3_FUNCTION": 74}  # ThrottleLeft, ThrottleRight
-_STEERED_OUTPUTS = {"SERVO1_FUNCTION": 26, "SERVO3_FUNCTION": 70}  # GroundSteering, Throttle
-FRAME_OUTPUTS: Dict[str, Dict[str, int]] = {
-    "motorboat-skid": _SKID_OUTPUTS,
-    "rover-skid": _SKID_OUTPUTS,
-    "motorboat": _STEERED_OUTPUTS,
-    "rover": _STEERED_OUTPUTS,
-}
 
 
 async def _output_mismatch(frame: Optional[str]) -> Optional[str]:
