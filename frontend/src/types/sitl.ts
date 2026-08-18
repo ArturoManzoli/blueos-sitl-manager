@@ -16,6 +16,37 @@ export interface Environment {
   speedup?: number | null
 }
 
+// The battery pack the simulated vehicle runs on. The defaults describe the BlueBoat's original
+// supply: two 4S 18 Ah Li-ion packs in parallel, so 14.8 V nominal, 36 Ah and 532 Wh.
+export interface BatteryPack {
+  enabled: boolean
+  cells: number
+  packs: number
+  capacity_ah: number
+  // What the electronics draw with the vehicle still.
+  idle_watts: number
+}
+
+// What the pack reads now, and the conditions its draw was computed from.
+export interface PowerReading {
+  watts: number
+  current: number
+  voltage: number
+  // Percent of the pack's charge left.
+  charge: number
+  consumed_mah: number
+  water_speed: number
+  // Apparent wind along the hull; negative is a following breeze.
+  headwind: number
+  charging: boolean
+}
+
+export interface PowerSupply {
+  pack: BatteryPack
+  // Absent unless the simulated pack is the one the vehicle is reporting.
+  reading: PowerReading | null
+}
+
 export interface AppliedParams {
   applied: string[]
   // Written but not confirmed by a read-back, so the simulator may not be running them.

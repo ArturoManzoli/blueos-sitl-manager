@@ -3,10 +3,12 @@ import axios from 'axios'
 import type {
   AppliedParams,
   ApplyJob,
+  BatteryPack,
   Environment,
   EnvironmentPreset,
   LocationPreset,
   OperationResult,
+  PowerSupply,
   SitlLocation,
   VehiclePreset,
   VehicleStatus,
@@ -104,6 +106,21 @@ export const EnvironmentApi = {
   },
   async deletePreset(name: string): Promise<OperationResult> {
     return (await api.delete<OperationResult>(`/environment/presets/${encodeURIComponent(name)}`)).data
+  },
+}
+
+export const PowerApi = {
+  // Carries the live reading along with the pack, so the panel polls one endpoint.
+  async get(): Promise<PowerSupply> {
+    return (await api.get<PowerSupply>('/power')).data
+  },
+  // Sets up the vehicle's battery monitor and starts driving its readings, or hands the
+  // simulator its own battery back.
+  async set(pack: BatteryPack): Promise<PowerSupply> {
+    return (await api.post<PowerSupply>('/power', pack)).data
+  },
+  async recharge(): Promise<OperationResult> {
+    return (await api.post<OperationResult>('/power/recharge')).data
   },
 }
 

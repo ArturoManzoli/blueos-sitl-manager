@@ -32,6 +32,9 @@ Firmware page, the Parameter Editor and MAVProxy.
 - **Ambient conditions** — set ArduPilot `SIM_*` parameters (`SIM_WIND_*`, `SIM_WAVE_*`,
   `SIM_TIDE_*`, `SIM_SPEEDUP`) over MAVLink, with presets (calm pool, light chop, open
   ocean, storm) that fill the sliders for "Apply conditions" to write. See below.
+- **Simulated battery pack** — voltage, current and charge appear in Cockpit as they would on the
+  real vehicle. The draw follows the BlueBoat's measured power curve and rises against a stream or
+  a headwind, so the section is offered on the BlueBoat preset only. See below.
 - **Spawn location** — pick where SITL boots on a map, then apply. See below.
 
 <img width="1346" height="968" alt="image" src="https://github.com/user-attachments/assets/0cfa3129-3d68-4bc5-b73c-a6638ee69524" />
@@ -145,7 +148,7 @@ Wind is just as particular, because the frame picks the simulation model:
 
 - `sailboat*` sails on it, and takes waves and current as well.
 - `motorboat*` is that same model with the sail area zeroed, so wind reaches its simulated
-  wind vane and never the hull.
+  wind vane and never the hull; the simulated battery pack below is what pays for it instead.
 - `vectored*` (ArduSub) has no air around it, so ArduPilot reuses the wind vector as the water
   the hull drags through: on a sub, wind *is* the current.
 - `rover*` and `balancebot` drive on dry land and are deaf to all of it.
@@ -169,6 +172,57 @@ change of wind takes to arrive.
 
 Conditions are managed exactly like vehicle presets, described below, except that loading one
 only fills the sliders in: nothing reaches the simulator until you press **Apply conditions**.
+
+## Simulated battery pack
+
+SITL's own battery is the throttle stick in disguise: 50 A wide open, nothing at rest. That says
+nothing about what a boat spends pushing a hull through water, so this panel replaces it with a
+pack of your own and a draw computed from the BlueBoat's own field data: the same
+`P = 19.13 · v³·³³` watts that Cockpit's mission estimates were fitted to.
+
+Three terms add up to the draw:
+
+- **The hull**, at its speed *through the water*. A stream is what makes that different from
+  speed over the ground: holding 1 m/s against half a metre of current costs what 1.5 m/s costs,
+  because half of it is spent standing still. Measured on the vehicle, at a steady 1 m/s over
+  ground: 1.76 A in calm water, 5.01 A against 0.5 m/s of stream.
+- **The windage**, from the apparent wind along the hull, at 0.37 W per (m/s)² of headwind per
+  m/s of way. ArduPilot puts no wind force on a motorboat hull, so this term is the extension's
+  own: the same cruise draws 2.81 A into 6 m/s of wind and 1.17 A with it behind.
+- **The electronics**, a flat hotel load the vehicle draws whether it moves or not.
+
+The pack is chosen as a boat is fitted: 2, 4, 6 or 8 of the 4S 18 Ah Li-ion packs Blue Robotics
+sells for the hull, starting at the BlueBoat's original supply of two, 14.8 V nominal and 532 Wh.
+**Custom pack** hands over the three fields behind it (cells in series, packs in parallel, amp-hours
+each) for a supply of any shape. Voltage follows a Li-ion resting curve as the charge is spent,
+16.6 V full down to 12 V empty, which ArduPilot then sags a little further under throttle.
+
+The readings reach Cockpit through the autopilot's own battery monitor rather than as messages of
+the extension's own, because Cockpit takes voltage, current and charge from `SYS_STATUS`, which
+only the autopilot sends. SITL feeds its simulated pack in over analog pins, so the monitor's
+current pin is pointed at one the simulator leaves at zero volts and `BATT_AMP_OFFSET` names the
+amperage outright, while `SIM_BATT_VOLTAGE` carries the voltage. `BATT_MONITOR` still does the
+rest of the work it does on a real vehicle: integrating the charge spent, deriving the percentage
+from `BATT_CAPACITY`, running its failsafes, so a battery failsafe fires in the simulator
+exactly as it would at sea.
+
+**Recharge** puts the charge back by charging: the loop draws a 300 A charger until the autopilot
+counts the pack full. ArduPilot only resets a spent pack on a command mavlink2rest cannot express,
+and a charger is the honest way round that.
+
+A real BlueBoat is good for most of a day, which is a gauge that barely moves on camera: about 1%
+over a ten-minute recording. Two dials fix that without lying about the physics: a smaller pack
+(1 Ah apiece empties in an hour of cruising), or `SIM_SPEEDUP`, which runs the whole mission
+faster, charge included.
+
+The pack is stored in the extension's persistent volume and taken up again when the extension
+restarts, since the autopilot is otherwise left reporting the last amperage written to it.
+Switching the pack off hands the simulator its own battery back.
+
+The curve above is one hull's, measured on a BlueBoat, and describes no other vehicle, so on any
+other preset the whole section is dimmed and inert, and the readings follow the same rule: applying
+a preset that turns SITL into an ROV hands the simulator's own battery back within seconds. The
+pack stays stored as it was and is picked up again when a boat is.
 
 ## Spawn location
 

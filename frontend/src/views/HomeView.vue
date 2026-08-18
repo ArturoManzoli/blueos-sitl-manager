@@ -5,6 +5,7 @@ import { onMounted, ref } from 'vue'
 import logo from '@/assets/br-logo-white.svg'
 import EnvironmentPanel from '@/components/EnvironmentPanel.vue'
 import LocationPanel from '@/components/LocationPanel.vue'
+import PowerPanel from '@/components/PowerPanel.vue'
 import StatusPanel from '@/components/StatusPanel.vue'
 import VehiclePanel from '@/components/VehiclePanel.vue'
 
@@ -14,6 +15,7 @@ const statusPanel = ref<InstanceType<typeof StatusPanel> | null>(null)
 const vehiclePanel = ref<InstanceType<typeof VehiclePanel> | null>(null)
 const locationPanel = ref<InstanceType<typeof LocationPanel> | null>(null)
 const environmentPanel = ref<InstanceType<typeof EnvironmentPanel> | null>(null)
+const powerPanel = ref<InstanceType<typeof PowerPanel> | null>(null)
 const refreshing = ref(false)
 
 // Every panel reads everything it shows, lists included. One entry point rather than a
@@ -26,6 +28,7 @@ async function reloadAll(): Promise<void> {
     vehiclePanel.value?.reload(),
     locationPanel.value?.reload(),
     environmentPanel.value?.reload(),
+    powerPanel.value?.reload(),
   ])
 }
 
@@ -110,6 +113,14 @@ onMounted(async () => {
       :expanded="true"
     >
       <EnvironmentPanel ref="environmentPanel" />
+    </BlueExpansiblePanel>
+
+    <BlueExpansiblePanel
+      title="Simulated battery pack"
+      theme="dark"
+      :expanded="true"
+    >
+      <PowerPanel ref="powerPanel" />
     </BlueExpansiblePanel>
   </BlueApp>
 </template>
