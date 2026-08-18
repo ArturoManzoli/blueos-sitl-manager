@@ -3,10 +3,16 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, status
 from fastapi_versioning import versioned_api_route
 
-from sitl_manager import autopilot, mavlink
+from sitl_manager import autopilot, custom_presets, mavlink
 from sitl_manager.api.common import require_sitl, to_http_exception
-from sitl_manager.models import AppliedParams, Environment, EnvironmentPreset
-from sitl_manager.presets import ENVIRONMENT_PARAM_MAP, ENVIRONMENT_PRESETS
+from sitl_manager.models import (
+    AppliedParams,
+    Environment,
+    EnvironmentPreset,
+    OperationResult,
+    RenamePresetRequest,
+)
+from sitl_manager.presets import ENVIRONMENT_PARAM_MAP, all_environment_presets
 
 # Ambient values are few enough that a second write costs nothing worth counting, and each
 # one that silently fails to land is a condition the user asked for and did not get.
@@ -72,14 +78,56 @@ async def set_environment(environment: Environment) -> AppliedParams:
 @environment_router.get("/presets", response_model=List[EnvironmentPreset], summary="List ambient presets.")
 @to_http_exception
 async def list_presets() -> List[EnvironmentPreset]:
-    return ENVIRONMENT_PRESETS
+    return all_environment_presets()
+
+
+def _builtin_names() -> List[str]:
+    return [preset.name for preset in all_environment_presets() if preset.builtin]
+
+
+@environment_router.post(
+    "/presets",
+    response_model=EnvironmentPreset,
+    summary="Save ambient conditions as a preset, replacing one of the same name.",
+)
+@to_http_exception
+async def save_preset(preset: EnvironmentPreset) -> EnvironmentPreset:
+    """Store named ambient conditions, whether set on the sliders or imported.
+
+    A built-in name is allowed and shadows the shipped conditions, which is how a built-in gets
+    edited; deleting it later brings the original back.
+    """
+    custom_presets.ensure_room(custom_presets.ENVIRONMENT_STORE, _builtin_names(), preset.name)
+    custom_presets.ENVIRONMENT_STORE.save(preset)
+    return preset
+
+
+@environment_router.post(
+    "/presets/{name}/rename",
+    response_model=EnvironmentPreset,
+    summary="Rename an ambient preset; renaming a built-in copies it.",
+)
+@to_http_exception
+async def rename_preset(name: str, request: RenamePresetRequest) -> EnvironmentPreset:
+    return custom_presets.rename(custom_presets.ENVIRONMENT_STORE, all_environment_presets(), name, request.name)
+
+
+@environment_router.delete(
+    "/presets/{name}",
+    response_model=OperationResult,
+    summary="Delete a saved ambient preset, or revert an edited built-in.",
+)
+@to_http_exception
+async def delete_preset(name: str) -> OperationResult:
+    detail = custom_presets.remove(custom_presets.ENVIRONMENT_STORE, _builtin_names(), name)
+    return OperationResult(success=True, detail=detail)
 
 
 @environment_router.post("/presets/{name}", response_model=AppliedParams, summary="Apply an ambient preset by name.")
 @to_http_exception
 async def apply_preset(name: str) -> AppliedParams:
     await require_sitl("ambient conditions only exist in the simulator")
-    preset = next((preset for preset in ENVIRONMENT_PRESETS if preset.name == name), None)
+    preset = next((preset for preset in all_environment_presets() if preset.name == name), None)
     if preset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Unknown preset '{name}'.")
     return await _apply(preset.environment)

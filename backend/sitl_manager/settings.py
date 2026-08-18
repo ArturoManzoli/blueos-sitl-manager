@@ -33,6 +33,12 @@ CUSTOM_LOCATIONS_DIR = Path(
     os.environ.get("SITL_CUSTOM_LOCATIONS_DIR", str(Path(__file__).resolve().parent / "data" / "custom_locations"))
 )
 
+# The same, for saved ambient conditions.
+CUSTOM_ENVIRONMENTS_DIR = Path(
+    os.environ.get(
+        "SITL_CUSTOM_ENVIRONMENTS_DIR", str(Path(__file__).resolve().parent / "data" / "custom_environments")
+    )
+)
 # The spawn location BlueOS ships as SIM_OPOS_* defaults (Florianópolis, Brazil). Stored
 # parameter values take precedence over those defaults, which is what lets the location
 # panel move the spawn point. Also used as a fallback when a parameter cannot be read.

@@ -16,12 +16,6 @@ export interface Environment {
   speedup?: number | null
 }
 
-export interface EnvironmentPreset {
-  name: string
-  description: string
-  environment: Environment
-}
-
 export interface AppliedParams {
   applied: string[]
   // Written but not confirmed by a read-back, so the simulator may not be running them.
@@ -43,6 +37,12 @@ export interface PresetOrigin {
   builtin?: boolean | null
   // True on a built-in a saved preset is currently shadowing, which reverts instead.
   overridden?: boolean | null
+}
+
+export interface EnvironmentPreset extends PresetOrigin {
+  name: string
+  description: string
+  environment: Environment
 }
 
 export interface LocationPreset extends PresetOrigin {

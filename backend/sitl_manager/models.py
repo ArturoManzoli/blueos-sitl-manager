@@ -36,12 +36,6 @@ class Environment(BaseModel):
     speedup: Optional[float] = Field(None, gt=0, description="SIM_SPEEDUP, simulation rate multiplier")
 
 
-class EnvironmentPreset(BaseModel):
-    name: str
-    description: str
-    environment: Environment
-
-
 class Location(BaseModel):
     """Where SITL spawns, held in the ArduPilot ``SIM_OPOS_*`` parameters."""
 
@@ -63,6 +57,13 @@ class NamedPreset(BaseModel):
     # True on a built-in that a saved preset is currently shadowing. Such a preset cannot be
     # deleted, only reverted to the curated definition, which is a different offer to make.
     overridden: Optional[bool] = None
+
+
+class EnvironmentPreset(NamedPreset):
+    # Optional so a preset file written by hand, or saved from the sliders without a note,
+    # still parses; it only ever feeds the tooltip on the preset's button.
+    description: str = ""
+    environment: Environment
 
 
 class LocationPreset(NamedPreset):

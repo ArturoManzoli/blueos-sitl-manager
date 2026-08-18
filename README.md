@@ -167,6 +167,9 @@ says where the flow *comes from*, matching ArduPilot's own convention. Vertical 
 the wind out of the horizontal (90° is a pure updraft), and variation time is how long a
 change of wind takes to arrive.
 
+Conditions are managed exactly like vehicle presets, described below, except that loading one
+only fills the sliders in: nothing reaches the simulator until you press **Apply conditions**.
+
 ## Spawn location
 
 BlueOS used to start SITL with a fixed `--home` (Florianópolis, Brazil), which overrode
@@ -193,7 +196,7 @@ restart**.
 
 ## Managing profiles
 
-Both preset rows work the same way. The three-dots menu beside a row acts on what is running
+All three preset rows work the same way. The three-dots menu beside a row acts on what is running
 or typed in — save it as a preset, export it, import a file — while holding or right-clicking
 a preset acts on that preset alone: **reload** it, **save** the current state over it, **rename**
 it, **export** it, or **delete** it.
@@ -210,8 +213,9 @@ that would add one are greyed out. Long names ellipsize once the row grows wide,
 still fits without pushing the panel around.
 
 Saved presets are JSON files under the extension's persistent volume — `custom_presets` for
-vehicles, `custom_locations` for spawn points — so they survive extension updates and can be
-copied between vehicles by hand as well as through import and export.
+vehicles, `custom_locations` for spawn points, `custom_environments` for ambient conditions — so
+they survive extension updates and can be copied between vehicles by hand as well as through
+import and export.
 
 ## Architecture
 

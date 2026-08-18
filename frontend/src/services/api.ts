@@ -93,6 +93,18 @@ export const EnvironmentApi = {
   async applyPreset(name: string): Promise<AppliedParams> {
     return (await api.post<AppliedParams>(`/environment/presets/${encodeURIComponent(name)}`)).data
   },
+  // One endpoint for saving and for importing: both amount to storing named conditions.
+  async savePreset(preset: EnvironmentPreset): Promise<EnvironmentPreset> {
+    return (await api.post<EnvironmentPreset>('/environment/presets', preset)).data
+  },
+  async renamePreset(name: string, newName: string): Promise<EnvironmentPreset> {
+    return (
+      await api.post<EnvironmentPreset>(`/environment/presets/${encodeURIComponent(name)}/rename`, { name: newName })
+    ).data
+  },
+  async deletePreset(name: string): Promise<OperationResult> {
+    return (await api.delete<OperationResult>(`/environment/presets/${encodeURIComponent(name)}`)).data
+  },
 }
 
 export const LocationApi = {

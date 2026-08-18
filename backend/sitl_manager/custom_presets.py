@@ -12,8 +12,17 @@ from typing import Generic, List, Optional, Sequence, Type, TypeVar
 
 from loguru import logger
 
-from sitl_manager.models import LocationPreset, NamedPreset, VehiclePreset
-from sitl_manager.settings import CUSTOM_LOCATIONS_DIR, CUSTOM_PRESETS_DIR
+from sitl_manager.models import (
+    EnvironmentPreset,
+    LocationPreset,
+    NamedPreset,
+    VehiclePreset,
+)
+from sitl_manager.settings import (
+    CUSTOM_ENVIRONMENTS_DIR,
+    CUSTOM_LOCATIONS_DIR,
+    CUSTOM_PRESETS_DIR,
+)
 
 # How many presets one row of buttons holds before they stop fitting, built-ins included.
 # Names are ellipsized well before this, so the limit is about the row's own width rather
@@ -91,6 +100,7 @@ class PresetStore(Generic[PresetT]):
 
 VEHICLE_STORE: PresetStore[VehiclePreset] = PresetStore(CUSTOM_PRESETS_DIR, VehiclePreset)
 LOCATION_STORE: PresetStore[LocationPreset] = PresetStore(CUSTOM_LOCATIONS_DIR, LocationPreset)
+ENVIRONMENT_STORE: PresetStore[EnvironmentPreset] = PresetStore(CUSTOM_ENVIRONMENTS_DIR, EnvironmentPreset)
 
 
 def ensure_room(store: PresetStore[PresetT], builtin_names: Sequence[str], name: str) -> None:

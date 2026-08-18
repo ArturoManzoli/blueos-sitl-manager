@@ -441,3 +441,10 @@ def all_location_presets() -> List[LocationPreset]:
     from sitl_manager.custom_presets import LOCATION_STORE
 
     return _merge_presets(LOCATION_PRESETS, LOCATION_STORE.list())
+
+
+def all_environment_presets() -> List[EnvironmentPreset]:
+    """Built-in ambient conditions, any edits to them applied, then the user's own."""
+    from sitl_manager.custom_presets import ENVIRONMENT_STORE
+
+    return _merge_presets(ENVIRONMENT_PRESETS, ENVIRONMENT_STORE.list())

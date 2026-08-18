@@ -6,17 +6,23 @@ import {
   BlueBannerGroup,
   BlueButton,
   BlueButtonGroup,
+  BlueIcon,
+  BlueMenu,
+  type BlueMenuItem,
+  BluePromptDialog,
   BlueSelect,
   BlueSlider,
   BlueWindRose,
+  useBlueLoading,
   useBlueSnackbar,
 } from '@bluerobotics/bluevue'
 
 import { isSitl, refreshVehicleStatus } from '@/composables/vehicleStatus'
-import { EnvironmentApi } from '@/services/api'
+import { EnvironmentApi, MAX_PRESETS } from '@/services/api'
 import type { AppliedParams, Environment, EnvironmentPreset } from '@/types/sitl'
 
 const { notify, notifyError } = useBlueSnackbar()
+const { showLoading, hideLoading } = useBlueLoading()
 
 // Form state keeps every field as a concrete number so it binds cleanly to sliders.
 type EnvironmentForm = { [K in keyof Environment]-?: number }
@@ -44,6 +50,16 @@ const applied = ref<EnvironmentForm | null>(null)
 const presets = ref<EnvironmentPreset[]>([])
 const busy = ref(false)
 const frame = ref<string | null>(null)
+
+const presetMenuOpen = ref(false)
+const saveDialogOpen = ref(false)
+const renameDialogOpen = ref(false)
+const importInput = ref<HTMLInputElement | null>(null)
+
+// The preset a long press or right-click opened the actions menu on, and where to hang it.
+const contextPreset = ref<EnvironmentPreset | null>(null)
+const contextTarget = ref<[number, number]>([0, 0])
+const contextMenuOpen = ref(false)
 
 const waveModes = [
   { name: 'Disabled', value: 0 },
@@ -144,16 +160,27 @@ const waterNotes = computed<BannerContent[]>(() => {
   ]
 })
 
+// The preset last picked or created, which settles the highlight while the sliders still sit on
+// it. Two presets can describe the same conditions — a renamed built-in leaves a copy of them
+// behind — so the values alone no longer name one preset, and the row would light up whichever
+// comes first.
+const chosenPresetName = ref('')
+
 // A preset matches while every condition it names is on the sliders, so the highlight follows
 // a value dragged onto or away from a preset rather than only a preset that was clicked.
-const matchedPresetName = computed(
-  () =>
-    presets.value.find((preset) =>
-      (Object.keys(preset.environment) as (keyof Environment)[]).every(
-        (key) => preset.environment[key] == null || preset.environment[key] === environment.value[key]
-      )
-    )?.name ?? ''
-)
+function isStaged(preset: EnvironmentPreset): boolean {
+  return (Object.keys(preset.environment) as (keyof Environment)[]).every(
+    (key) => preset.environment[key] == null || preset.environment[key] === environment.value[key]
+  )
+}
+
+const matchedPresetName = computed(() => {
+  const chosen = presets.value.find((preset) => preset.name === chosenPresetName.value)
+  if (chosen && isStaged(chosen)) {
+    return chosen.name
+  }
+  return presets.value.find(isStaged)?.name ?? ''
+})
 
 const presetButtons = computed(() =>
   presets.value.map((preset) => ({
@@ -163,6 +190,63 @@ const presetButtons = computed(() =>
     onSelected: () => stagePreset(preset),
   })),
 )
+
+const presetsFull = computed(() => presets.value.length >= MAX_PRESETS)
+const fullHint = computed(() => (presetsFull.value ? `The row holds ${MAX_PRESETS} presets; delete one first` : undefined))
+
+// The three-dots menu, which acts on the conditions on the sliders rather than on any preset.
+const presetActions = computed<BlueMenuItem[]>(() => [
+  {
+    title: 'Save current conditions as preset',
+    icon: 'mdi-content-save-outline',
+    disabled: presetsFull.value,
+    hint: fullHint.value,
+    action: () => (saveDialogOpen.value = true),
+  },
+  { title: 'Download preset file', icon: 'mdi-download-outline', action: downloadCurrentConditions },
+  {
+    title: 'Import preset file',
+    icon: 'mdi-upload-outline',
+    disabled: presetsFull.value,
+    hint: fullHint.value,
+    action: () => importInput.value?.click(),
+  },
+])
+
+// What a long press offers for one preset, matching the vehicle and location presets: a built-in
+// can be edited, renamed (as a copy) and exported, but only ever reverted, never deleted.
+const contextItems = computed<BlueMenuItem[]>(() => {
+  const preset = contextPreset.value
+  if (!preset) {
+    return []
+  }
+  const items: BlueMenuItem[] = [
+    { title: 'Reload profile', icon: 'mdi-refresh', action: () => stagePreset(preset) },
+    {
+      title: 'Save current conditions here',
+      icon: 'mdi-content-save-outline',
+      action: () => savePreset(preset.name, preset.description),
+    },
+    { title: 'Rename…', icon: 'mdi-rename-box-outline', action: () => (renameDialogOpen.value = true) },
+    { title: 'Export to file', icon: 'mdi-download-outline', action: () => triggerDownload(preset) },
+  ]
+  if (preset.overridden) {
+    items.push({
+      title: 'Revert to built-in',
+      icon: 'mdi-backup-restore',
+      danger: true,
+      action: () => removePreset(preset),
+    })
+  } else if (!preset.builtin) {
+    items.push({
+      title: 'Delete profile',
+      icon: 'mdi-delete-outline',
+      danger: true,
+      action: () => removePreset(preset),
+    })
+  }
+  return items
+})
 
 async function loadPresets(): Promise<void> {
   try {
@@ -237,6 +321,119 @@ function stagePreset(preset: EnvironmentPreset): void {
       environment.value[key] = value
     }
   }
+  chosenPresetName.value = preset.name
+}
+
+function onPresetContextMenu({ item, x, y }: { item: { name: string }; x: number; y: number }): void {
+  const preset = presets.value.find((candidate) => candidate.name === item.name)
+  if (!preset) {
+    return
+  }
+  contextPreset.value = preset
+  contextTarget.value = [x, y]
+  contextMenuOpen.value = true
+}
+
+// Stores the conditions on the sliders under a name. Saving onto a built-in's name shadows the
+// shipped conditions until it is reverted, which is how a built-in gets edited.
+async function savePreset(name: string, description: string): Promise<void> {
+  showLoading(`Saving "${name}"…`)
+  try {
+    const saved = await EnvironmentApi.savePreset({ name, description, environment: { ...environment.value } })
+    await loadPresets()
+    // Saved from the sliders, which another preset may already describe, so the row is told
+    // which name to light up rather than left to work it out from the values.
+    chosenPresetName.value = saved.name
+    notify(`Saved conditions preset "${saved.name}".`, { severity: 'success' })
+  } catch (error) {
+    notifyError(error, 'Could not save the conditions preset')
+  } finally {
+    hideLoading()
+  }
+}
+
+async function confirmRenamePreset(newName: string): Promise<void> {
+  const preset = contextPreset.value
+  if (!preset) {
+    return
+  }
+  showLoading(`Renaming "${preset.name}"…`)
+  try {
+    const renamed = await EnvironmentApi.renamePreset(preset.name, newName)
+    await loadPresets()
+    if (preset.builtin) {
+      // A built-in is renamed by copying it, so the row gains an entry describing conditions
+      // that already had one and nothing would look to have happened. Moving onto it shows it.
+      stagePreset(renamed)
+    } else if (chosenPresetName.value === preset.name) {
+      chosenPresetName.value = newName
+    }
+    notify(
+      preset.builtin
+        ? `Copied "${preset.name}" to "${newName}"; the built-in stays in place.`
+        : `Renamed "${preset.name}" to "${newName}".`,
+      { severity: 'success' }
+    )
+  } catch (error) {
+    notifyError(error, `Could not rename ${preset.name}`)
+  } finally {
+    hideLoading()
+  }
+}
+
+async function removePreset(preset: EnvironmentPreset): Promise<void> {
+  showLoading(preset.builtin ? `Reverting "${preset.name}"…` : `Deleting preset "${preset.name}"…`)
+  try {
+    const result = await EnvironmentApi.deletePreset(preset.name)
+    await loadPresets()
+    notify(result.detail, { severity: 'success' })
+  } catch (error) {
+    notifyError(error, `Could not delete ${preset.name}`)
+  } finally {
+    hideLoading()
+  }
+}
+
+function triggerDownload(preset: EnvironmentPreset): void {
+  const payload = { name: preset.name, description: preset.description, environment: preset.environment }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${preset.name || 'sitl-conditions'}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function downloadCurrentConditions(): void {
+  triggerDownload({ name: 'Current conditions', description: '', environment: { ...environment.value } })
+}
+
+async function onImportFileSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) {
+    return
+  }
+  showLoading('Importing conditions preset…')
+  try {
+    const preset = JSON.parse(await file.text()) as EnvironmentPreset
+    const saved = await EnvironmentApi.savePreset({
+      name: preset.name,
+      description: preset.description ?? '',
+      environment: preset.environment,
+    })
+    await loadPresets()
+    // Moving onto what arrived is what shows it: the row would otherwise light up whichever
+    // preset already described those conditions, and an import would read as having done nothing.
+    stagePreset(saved)
+    notify(`Imported conditions preset "${saved.name}".`, { severity: 'success' })
+  } catch (error) {
+    notifyError(error, 'Could not import the conditions preset')
+  } finally {
+    hideLoading()
+  }
 }
 
 const metersPerSecond = (value: number): string => `${value.toFixed(1)} m/s`
@@ -248,21 +445,55 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
 
 <template>
   <div class="flex flex-col gap-5">
-    <BlueButtonGroup
-      v-if="presetButtons.length"
-      :key="matchedPresetName"
-      class="order-1"
-      label="Presets"
-      theme="dark"
-      type="switch"
-      density="regular"
-      :disabled="busy || !isSitl"
-      :button-items="presetButtons"
-      info-tooltip="Picking a preset fills the sliders below with the conditions it describes; Apply writes them to the simulator."
-    />
+    <div class="order-1 flex items-center gap-2">
+      <div class="flex-1 min-w-0">
+        <BlueButtonGroup
+          v-if="presetButtons.length"
+          :key="`${presets.length}-${matchedPresetName}`"
+          label="Presets"
+          theme="dark"
+          type="switch"
+          density="regular"
+          :disabled="busy || !isSitl"
+          :button-items="presetButtons"
+          info-tooltip="Picking a preset fills the sliders below with the conditions it describes; Apply writes them to the simulator. Hold or right-click a preset for its own actions."
+          @context-menu="onPresetContextMenu"
+        />
+      </div>
+      <BlueMenu
+        v-model="presetMenuOpen"
+        :items="presetActions"
+      >
+        <template #activator="{ props: menuProps }">
+          <button
+            v-bind="menuProps"
+            class="shrink-0 rounded-[6px] px-1 py-1 text-[#ffffffaa] hover:text-white transition-colors"
+            :class="busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"
+            title="Preset actions"
+          >
+            <BlueIcon name="mdi-dots-vertical" />
+          </button>
+        </template>
+      </BlueMenu>
+      <BlueMenu
+        v-model="contextMenuOpen"
+        :items="contextItems"
+        :target="contextTarget"
+      />
+      <input
+        ref="importInput"
+        type="file"
+        accept="application/json,.json"
+        class="hidden"
+        @change="onImportFileSelected"
+      >
+    </div>
 
     <div class="order-2">
-      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
+      <!-- Each category carries the rule above it, which is what keeps the line where the groups
+           reorder to: one that sinks below Apply takes its divider with it. -->
+      <div class="mx-auto mb-4 h-px w-[70%] bg-[#ffffff0b]" />
+      <div class="text-base font-bold uppercase tracking-wide text-[#989898] mt-[5px] mb-[17px] truncate">
         Simulation
       </div>
       <BlueSlider
@@ -270,7 +501,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
         name="speedup"
         label="Speed-up"
         theme="dark"
-        width="380px"
         :min="0.1"
         :max="10"
         :step="0.1"
@@ -280,7 +510,8 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
     </div>
 
     <div :class="windApplies ? 'order-3' : 'order-5'">
-      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
+      <div class="mx-auto mb-4 h-px w-[70%] bg-[#ffffff0b]" />
+      <div class="text-base font-bold uppercase tracking-wide text-[#989898] mt-[5px] mb-[17px] truncate">
         Wind
       </div>
       <div class="flex flex-col gap-3">
@@ -293,7 +524,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           name="wind-speed"
           label="Speed"
           theme="dark"
-          width="380px"
           :min="0"
           :max="30"
           :step="0.5"
@@ -313,7 +543,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           name="wind-elevation"
           label="Vertical angle"
           theme="dark"
-          width="380px"
           :min="-90"
           :max="90"
           :step="1"
@@ -325,7 +554,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           name="wind-turbulence"
           label="Turbulence"
           theme="dark"
-          width="380px"
           :min="0"
           :max="1"
           :step="0.05"
@@ -336,7 +564,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           name="wind-variation"
           label="Variation time"
           theme="dark"
-          width="380px"
           :min="0.1"
           :max="60"
           :step="0.1"
@@ -357,7 +584,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           name="wind-full-altitude"
           label="Full-speed altitude"
           theme="dark"
-          width="380px"
           :min="0"
           :max="300"
           :step="5"
@@ -368,7 +594,8 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
     </div>
 
     <div :class="waterApplies ? 'order-3' : 'order-5'">
-      <div class="text-xs uppercase tracking-wide text-[#ffffff66] mb-3 truncate">
+      <div class="mx-auto mb-4 h-px w-[70%] bg-[#ffffff0b]" />
+      <div class="text-base font-bold uppercase tracking-wide text-[#989898] mt-[5px] mb-[17px] truncate">
         Waves &amp; current
       </div>
       <div class="flex flex-col gap-3">
@@ -390,7 +617,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           name="wave-amplitude"
           label="Wave amplitude"
           theme="dark"
-          width="380px"
           :min="0"
           :max="3"
           :step="0.1"
@@ -410,7 +636,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
           name="current-speed"
           label="Current speed"
           theme="dark"
-          width="380px"
           :min="0"
           :max="3"
           :step="0.1"
@@ -433,7 +658,6 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
     <div class="order-4 flex justify-end">
       <BlueButton
         variant="filled"
-        density="compact"
         theme="dark"
         :loading="busy"
         :disabled="!isSitl || !pendingChange"
@@ -442,5 +666,31 @@ const speedupLabel = (value: number): string => `${value.toFixed(1)}×`
         Apply conditions
       </BlueButton>
     </div>
+
+    <BluePromptDialog
+      v-model="saveDialogOpen"
+      icon="mdi-weather-partly-cloudy"
+      title="Save current conditions"
+      subtitle="Stores every value on the sliders below, so you can come back to these conditions in one click."
+      label="Preset name"
+      notes-label="Description (optional)"
+      hint="Saving does not write anything to the simulator."
+      @confirm="savePreset"
+    />
+
+    <BluePromptDialog
+      v-model="renameDialogOpen"
+      icon="mdi-rename-box-outline"
+      title="Rename preset"
+      label="New name"
+      confirm-label="Rename"
+      :initial="contextPreset?.name"
+      :subtitle="
+        contextPreset?.builtin
+          ? `${contextPreset.name} is built in and stays where it is, so this saves a copy under the new name.`
+          : `Renames ${contextPreset?.name}, keeping the conditions it describes.`
+      "
+      @confirm="confirmRenamePreset"
+    />
   </div>
 </template>
