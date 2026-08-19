@@ -20,7 +20,13 @@ FROM python:3.11-slim AS runtime
 WORKDIR /app
 
 COPY backend/requirements.txt ./requirements.txt
-RUN python -m pip install --no-cache-dir -r requirements.txt
+# gcc is only needed on linux/arm/v7, where httptools has no wheel.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && python -m pip install --no-cache-dir -r requirements.txt \
+    && apt-get purge -y gcc libc6-dev \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY backend/ ./
 COPY --from=frontend-builder /frontend/dist ./static

@@ -4,3 +4,9 @@ fastapi-versioning==0.9.1
 loguru==0.5.3
 pydantic==1.10.12
 uvicorn==0.18.0
+# BlueOS nginx always sets Connection: Upgrade. uvicorn's h11 parser then 400s
+# ordinary HTTP as "Unsupported upgrade request."; httptools only upgrades
+# when the client actually sent Upgrade: websocket. Avoid uvicorn[standard]
+# because uvloop has no wheels on some ARM images.
+httptools==0.6.4
+wsproto==1.2.0
