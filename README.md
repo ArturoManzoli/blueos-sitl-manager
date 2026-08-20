@@ -9,7 +9,7 @@ configure their simulated vehicle: vehicle type and frame, ambient conditions (w
 waves, current, simulation speed) and spawn location — without juggling the Autopilot
 Firmware page, the Parameter Editor and MAVProxy.
 
-> v0.3.0. Built for development workflows with BlueOS + Cockpit.
+> v0.3.1. Built for development workflows with BlueOS + Cockpit.
 
 ## Requirements
 

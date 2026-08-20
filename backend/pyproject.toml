@@ -1,6 +1,6 @@
 [project]
 name = "blueos-sitl-manager"
-version = "0.3.0"
+version = "0.3.1"
 description = "BlueOS extension to manage SITL vehicle type, ambient conditions, spawn location and battery."
 requires-python = ">=3.11"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
   "fastapi-versioning==0.9.1",
   "loguru==0.5.3",
   "pydantic==1.10.12",
-  "uvicorn==0.18.0",
+  "uvicorn==0.38.0",
 ]
 
 [dependency-groups]
