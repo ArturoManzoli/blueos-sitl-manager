@@ -1,6 +1,6 @@
 [project]
 name = "blueos-sitl-manager"
-version = "0.3.0"
+version = "0.3.1"
 description = "BlueOS extension to manage SITL vehicle type, ambient conditions, spawn location and battery."
 requires-python = ">=3.11"
 dependencies = [
