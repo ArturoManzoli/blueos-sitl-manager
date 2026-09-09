@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple, TypeVar
 
@@ -319,6 +320,26 @@ FRAME_OUTPUTS: Dict[str, Dict[str, int]] = {
 # 4.7 branched. A frame named here is installed with a build new enough to run it, which is the
 # development build until the version below is released as stable, and the entry can go then.
 FRAME_MINIMUM_FIRMWARE: Dict[str, str] = {"motorboat-skid": "4.8.0"}
+
+# Parameters that bind a feature to a channel, a button or an output, all of which read 0 as
+# bound to nothing. They are what makes a leftover dangerous rather than merely untidy: a
+# BlueROV2 puts its camera tilt on RC8_OPTION, ArduRover takes its flight mode from RC8, and a
+# BlueBoat inheriting the pair refuses to arm on the conflict. Tuning left behind is inert by
+# comparison, so nothing else is touched.
+ASSIGNMENT_PARAM = re.compile(r"^(?:RC\d+_OPTION|BTN\d+_S?FUNCTION|SERVO\d+_FUNCTION|MNT\d+_TYPE|RNGFND\d+_TYPE)$")
+
+
+def unclaimed_assignments(claimed: Dict[str, float], onboard: Dict[str, float]) -> Dict[str, float]:
+    """The bindings a vehicle carries that a preset does not claim, handed back to 0.
+
+    Read from what the autopilot reports rather than from the presets, so switching away from
+    a preset that is no longer installed still clears it and a firmware without the parameter
+    is never written to.
+    """
+    return {
+        name: 0.0 for name, value in onboard.items() if value and name not in claimed and ASSIGNMENT_PARAM.match(name)
+    }
+
 
 # The Blue Robotics presets are composed from the parameter layers Blue Robotics ships in
 # bluerobotics/Blueos-Parameter-Repository, vendored under data/vendor. Each vehicle is
