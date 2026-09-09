@@ -32,6 +32,7 @@ from sitl_manager.presets import (
     FRAME_OUTPUTS,
     LOCATION_PARAM_MAP,
     SITL_ACCEL_CALIBRATION,
+    unclaimed_assignments,
 )
 from sitl_manager.settings import REBUILD_READY_TIMEOUT, VEHICLE_READY_TIMEOUT
 
@@ -74,6 +75,9 @@ class _Request(NamedTuple):
     vehicle: Optional[Vehicle]
     frame: Optional[str]
     params: Dict[str, float]
+    # A preset describes a whole vehicle, so a binding it leaves out is one the vehicle should
+    # not have. A vehicle or frame chosen by hand says nothing about wiring and leaves it be.
+    from_preset: bool = False
 
 
 @dataclass
@@ -268,7 +272,7 @@ def _changed(counts: Dict[str, int]) -> int:
     return counts.get(ParamOutcome.WRITTEN.value, 0) + counts.get(ParamOutcome.UNCONFIRMED.value, 0)
 
 
-async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
+async def _apply_params(job: ApplyJob, params: Dict[str, float], clear_unclaimed: bool = False) -> int:
     """Write the parameters that differ from what the vehicle already holds.
 
     One parameter dump up front tells us which values are already correct, which is far
@@ -281,11 +285,17 @@ async def _apply_params(job: ApplyJob, params: Dict[str, float]) -> int:
     job.records.clear()
     job.counts.clear()
     job.params_done = 0
-    job.params_total = len(params)
     _begin(job, STEP_PARAMETERS, "Reading current parameters")
     onboard = await mavlink.dump_all_params()
     if not onboard:
         logger.warning("Parameter dump came back empty; every parameter will be written and verified")
+
+    if clear_unclaimed:
+        stale = unclaimed_assignments(params, onboard)
+        if stale:
+            logger.info(f"Clearing bindings the preset does not claim: {', '.join(sorted(stale))}")
+            params = {**params, **stale}
+    job.params_total = len(params)
 
     for name, value in params.items():
         target = float(value)
@@ -421,7 +431,7 @@ async def _stage_parameters(job: ApplyJob, request: "_Request", progress: "_Prog
     if not params:
         _finish(job, STEP_PARAMETERS, "No parameters to send", state=StepState.SKIPPED)
         return
-    progress.written = await _apply_params(job, params)
+    progress.written = await _apply_params(job, params, clear_unclaimed=request.from_preset)
 
 
 async def _stage_rebuild(job: ApplyJob, request: "_Request", progress: "_Progress") -> None:
@@ -512,6 +522,7 @@ def _start(
     vehicle: Optional[Vehicle],
     frame: Optional[str],
     params: Dict[str, float],
+    from_preset: bool = False,
 ) -> ApplyJob:
     global _job, _request, _task, _next_id, _carried  # noqa: PLW0603 - one autopilot, one job
 
@@ -535,7 +546,7 @@ def _start(
 
     _next_id += 1
     _job = job
-    _request = _Request(title, vehicle, frame, params)
+    _request = _Request(title, vehicle, frame, params, from_preset)
     _spawn(_run(job, _request, _Progress()))
     return job
 
@@ -602,7 +613,7 @@ def skip() -> ApplyJob:
 
 def start_preset(preset: VehiclePreset) -> ApplyJob:
     # An imported or older saved preset can carry no frame; leave the running one alone.
-    return _start(preset.name, preset.vehicle, preset.frame or None, dict(preset.parameters))
+    return _start(preset.name, preset.vehicle, preset.frame or None, dict(preset.parameters), from_preset=True)
 
 
 def start_config(vehicle: Optional[Vehicle], frame: Optional[str]) -> ApplyJob:

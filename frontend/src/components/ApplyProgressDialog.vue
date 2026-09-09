@@ -194,7 +194,7 @@ onUnmounted(stopPolling)
           :size="13"
           color="#EF5350"
         />
-        <span class="truncate">{{ awaitingStep.detail || awaitingStep.title }}</span>
+        <span class="break-words">{{ awaitingStep.detail || awaitingStep.title }}</span>
       </div>
     </template>
 

@@ -14,6 +14,19 @@ from sitl_manager.settings import (
     RESTART_TIMEOUT,
 )
 
+# ArduPilot Manager types the frame it is given as an enum and reports anything outside it
+# through FastAPI's request validation. Its own failures answer 500, so this status on
+# /sitl_frame means the name itself, not the autopilot behind it.
+UNPROCESSABLE_ENTITY = 422
+
+# The releases that first carried each frame ArduPilot Manager did not always know. Their
+# models exist in ArduPilot itself, so what an older BlueOS is missing is only the name in
+# its enum, and nothing short of updating it will take the frame.
+FRAME_MINIMUM_BLUEOS: Dict[str, str] = {
+    "motorboat-skid": "1.5.0-beta.22",
+    "rover-skid": "1.5.0-beta.22",
+}
+
 
 def _encode_params(params: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """aiohttp rejects bool query params; ardupilot-manager expects lowercase strings."""
@@ -106,9 +119,22 @@ async def get_vehicle_type() -> Optional[str]:
     return str(vehicle_type) if vehicle_type else None
 
 
+def _frame_unavailable(frame: str) -> str:
+    """Why a frame was refused, in place of the bare 422 the rejection arrives as."""
+    since = FRAME_MINIMUM_BLUEOS.get(frame)
+    if since is None:
+        return f"This BlueOS does not offer the {frame} SITL frame."
+    return f"The {frame} SITL frame needs BlueOS {since} or newer, which this vehicle does not run."
+
+
 async def set_sitl_frame(frame: str) -> None:
     # ArduPilot Manager persists the frame; it only takes effect on the next SITL start.
-    await _post("/sitl_frame", params={"frame": frame})
+    try:
+        await _post("/sitl_frame", params={"frame": frame})
+    except aiohttp.ClientResponseError as error:
+        if error.status != UNPROCESSABLE_ENTITY:
+            raise
+        raise ValueError(_frame_unavailable(frame)) from error
 
 
 async def restart() -> None:
