@@ -252,7 +252,6 @@ async function recharge(): Promise<void> {
         name="simulated-pack"
         label="Simulate the pack"
         theme="dark"
-        width="340px"
         :disabled="locked || busy"
         info-tooltip="The vehicle reports this pack instead of the simulator's own, which only follows the throttle. The draw comes from the BlueBoat's measured power curve and rises against a stream or a headwind, and the autopilot counts the charge spent, so Cockpit shows it as it would a real monitor."
       />
