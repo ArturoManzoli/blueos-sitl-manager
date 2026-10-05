@@ -87,6 +87,9 @@ export interface VehicleStatus {
   frame: string | null
   firmware_vehicle_type: string | null
   firmware_version: string | null
+  arming_blocked: boolean
+  // The autopilot's own words, absent when it refused without explaining itself.
+  arming_refusal: string | null
 }
 
 export type VehicleType = 'Sub' | 'Rover' | 'Plane' | 'Copter'

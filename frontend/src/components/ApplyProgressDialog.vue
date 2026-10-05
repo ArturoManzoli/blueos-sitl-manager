@@ -179,7 +179,7 @@ onUnmounted(stopPolling)
       </div>
       <div
         v-if="awaitingStep"
-        class="flex items-center gap-2 py-[3px]"
+        class="flex items-start gap-2 py-[3px]"
         :class="running ? 'text-[#ffffffcc]' : 'text-[#EF5350]'"
       >
         <BlueSpinner
@@ -187,12 +187,14 @@ onUnmounted(stopPolling)
           :size="11"
           :width="2"
           color="#42A5F5"
+          class="mt-[2px]"
         />
         <BlueIcon
           v-else
           name="mdi-alert-circle"
           :size="13"
           color="#EF5350"
+          class="mt-[1px]"
         />
         <span class="break-words">{{ awaitingStep.detail || awaitingStep.title }}</span>
       </div>

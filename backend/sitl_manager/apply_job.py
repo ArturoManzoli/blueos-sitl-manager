@@ -32,6 +32,7 @@ from sitl_manager.presets import (
     FRAME_OUTPUTS,
     LOCATION_PARAM_MAP,
     SITL_ACCEL_CALIBRATION,
+    SITL_RC_ARMING,
     unclaimed_assignments,
 )
 from sitl_manager.settings import REBUILD_READY_TIMEOUT, VEHICLE_READY_TIMEOUT
@@ -426,11 +427,10 @@ async def _stage_parameters(job: ApplyJob, request: "_Request", progress: "_Prog
     # What the install took away rides along with the preset's parameters: each is a parameter
     # like any other, and sending them here means the rebuild restart is what applies them,
     # rather than a third reboot. Already-correct values cost nothing, since the write only
-    # happens where the vehicle disagrees.
-    params = {**request.params, **_carried}
-    if not params:
-        _finish(job, STEP_PARAMETERS, "No parameters to send", state=StepState.SKIPPED)
-        return
+    # happens where the vehicle disagrees, which is why the arming set travels with every
+    # configuration rather than only with a preset: parameter storage starts empty after an
+    # install, and what ArduPilot defaults to there is what stops a vehicle arming on a gamepad.
+    params = {**request.params, **_carried, **SITL_RC_ARMING}
     progress.written = await _apply_params(job, params, clear_unclaimed=request.from_preset)
 
 

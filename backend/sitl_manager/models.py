@@ -121,6 +121,10 @@ class VehicleStatus(BaseModel):
     frame: Optional[str] = None
     firmware_vehicle_type: Optional[str] = None
     firmware_version: Optional[str] = None
+    # Whether the autopilot would refuse to arm, and the reason when it gave one. A refusal it
+    # has not explained still reaches the panel, because the fact of it is worth knowing.
+    arming_blocked: bool = False
+    arming_refusal: Optional[str] = None
 
 
 class VehicleConfigRequest(BaseModel):

@@ -35,10 +35,10 @@
     "@babel/helper-string-parser" "^7.29.7"
     "@babel/helper-validator-identifier" "^7.29.7"
 
-"@bluerobotics/bluevue@0.2.1":
-  version "0.2.1"
-  resolved "https://registry.yarnpkg.com/@bluerobotics/bluevue/-/bluevue-0.2.1.tgz#811469d7544498989949ff0489afa6ed6d7dd2db"
-  integrity sha512-vkuf/OLcYudrAbgpUqaVimcVXIRZErO3BNLQKg+QLVKdaVz0BewNzN2UvgTbnIRVprkxc7O9pqgu2dUMgAz8hA==
+"@bluerobotics/bluevue@0.2.3":
+  version "0.2.3"
+  resolved "https://registry.yarnpkg.com/@bluerobotics/bluevue/-/bluevue-0.2.3.tgz#ef99e7c2c35f8134cf4efaacfe440f51e081e290"
+  integrity sha512-XIt69vMYmXts0084EMu2zT0Cg2SCu7+OrBgYbuzrqCOYpmaa6z9B3b9OlfhhlWxenwD515C4tS+xMecKWJdS4g==
   dependencies:
     "@floating-ui/vue" "2.0.1"
 

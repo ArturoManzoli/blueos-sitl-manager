@@ -105,6 +105,16 @@ SITL_ACCEL_CALIBRATION: Dict[str, float] = {
 }
 
 
+# A vehicle flown from Cockpit with a gamepad is driven by MANUAL_CONTROL, which ArduPilot
+# turns into RC input, so the arming checks that want the sticks centred apply to a simulated
+# vehicle exactly as they do to one with a receiver: arming is refused with "Throttle (RC3) is
+# not neutral" for an axis resting further from its trim than the channel's dead zone, which a
+# throttle mapped to a trigger, resting at one end of its travel, can never satisfy. Bit 6
+# skips the roll, pitch and yaw checks and leaving bit 5 clear drops the throttle one, against
+# an ArduPilot default of 32 that is the reverse of both.
+SITL_RC_ARMING: Dict[str, float] = {"RC_OPTIONS": 64}
+
+
 def _is_hardware_param(name: str) -> bool:
     return name in HARDWARE_PARAMS or name.startswith(HARDWARE_PREFIXES) or name.endswith(HARDWARE_SUFFIXES)
 
