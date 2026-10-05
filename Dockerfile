@@ -35,7 +35,7 @@ ENV SITL_CUSTOM_ENVIRONMENTS_DIR=/app/persistent/custom_environments
 # the extension no longer knows it is driving.
 ENV SITL_POWER_PACK_FILE=/app/persistent/battery_pack.json
 
-LABEL version="0.3.2"
+LABEL version="0.3.3"
 
 # Map container port 80 to a free host port and bridge to the vehicle network so the
 # extension can reach BlueOS services via host.docker.internal. The Binds entry persists
