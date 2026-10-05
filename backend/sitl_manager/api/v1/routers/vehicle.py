@@ -7,6 +7,7 @@ from sitl_manager import apply_job, autopilot, custom_presets, mavlink
 from sitl_manager.api.common import require_sitl, to_http_exception
 from sitl_manager.models import (
     ActivePreset,
+    AppliedParams,
     ApplyJob,
     OperationResult,
     RenamePresetRequest,
@@ -16,7 +17,11 @@ from sitl_manager.models import (
     VehiclePreset,
     VehicleStatus,
 )
-from sitl_manager.presets import PRESET_EXCLUDED_PREFIXES, all_vehicle_presets
+from sitl_manager.presets import (
+    PRESET_EXCLUDED_PREFIXES,
+    SITL_RC_ARMING,
+    all_vehicle_presets,
+)
 
 # The frame-defining parameter that distinguishes the presets of each vehicle family:
 # FRAME_CONFIG separates BlueROV2 (1) from BlueROV2 Heavy (2); FRAME_CLASS identifies the
@@ -33,6 +38,12 @@ FRAME_PARAM_BY_VEHICLE = {
 # firmware which does not have it, repeated enough to ride out an autopilot still settling.
 FRAME_PARAM_TIMEOUT = 1.5
 FRAME_PARAM_ATTEMPTS = 3
+
+# The arming settings are read on every page load and written only where they differ, so the
+# read is asked again rather than given a long timeout: an autopilot that answered late would
+# otherwise have the page announce a repair the vehicle did not need.
+ARMING_PARAM_TIMEOUT = 1.5
+ARMING_PARAM_ATTEMPTS = 3
 
 # ArduPilot Manager reports the firmware type as e.g. "ArduSub"; map it to our enum.
 FIRMWARE_TYPE_TO_VEHICLE = {
@@ -203,6 +214,32 @@ async def restart() -> OperationResult:
     await require_sitl("only the simulated autopilot is restarted from here")
     await autopilot.restart()
     return OperationResult(success=True, detail="Autopilot restarted.")
+
+
+@vehicle_router.post(
+    "/arming-checks",
+    response_model=AppliedParams,
+    summary="Relax the RC arming checks so the vehicle arms with a gamepad connected.",
+)
+@to_http_exception
+async def relax_arming_checks() -> AppliedParams:
+    """Bring a running vehicle to the arming settings a preset now writes.
+
+    These take effect where they are written, so a vehicle configured before the presets
+    carried them is repaired in place rather than made to sit through another apply, and one
+    that already holds them is left alone: an empty ``applied`` is a vehicle that needed
+    nothing, which is what keeps this quiet on every page load after the first.
+    """
+    await require_sitl("the arming checks of a connected autopilot are not ours to relax")
+    differing: Dict[str, float] = {}
+    for name, value in SITL_RC_ARMING.items():
+        current = await mavlink.get_param(name, timeout=ARMING_PARAM_TIMEOUT, attempts=ARMING_PARAM_ATTEMPTS)
+        if current is None or not mavlink.values_match(current, value):
+            differing[name] = value
+    if not differing:
+        return AppliedParams()
+    applied, unverified = await mavlink.set_params_verified(differing, attempts=ARMING_PARAM_ATTEMPTS)
+    return AppliedParams(applied=applied, unverified=unverified)
 
 
 @vehicle_router.get("/presets", response_model=List[VehiclePreset], summary="List ready-to-fly vehicle presets.")

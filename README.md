@@ -92,6 +92,15 @@ let a simulated vehicle pass the prearm 3D-accel check. Installing firmware star
 from empty parameter storage, so those offsets are written for a configuration that carries
 none of its own too, alongside the spawn location the install took with it.
 
+The arming checks that want the sticks centred are relaxed for the same reason. A gamepad in
+Cockpit reaches the autopilot as MANUAL_CONTROL, which ArduPilot turns into RC input, so a
+simulated vehicle refuses to arm with `Throttle (RC3) is not neutral` whenever an axis rests
+further from its trim than the channel's dead zone, which a throttle mapped to a trigger,
+resting at one end of its travel, never manages. Every configuration applied here writes
+`RC_OPTIONS 64`, which drops the throttle check and skips the roll, pitch and yaw ones. The
+setting takes effect where it is written, so a vehicle configured before this existed is
+brought up to it when the page loads rather than at its next apply.
+
 Outputs follow the simulator's wiring rather than the product's where the two differ.
 Every skid model takes output 1 as the left motor and output 3 as the right one and derives yaw
 from their difference, while a shipped BlueBoat puts the right thruster on output 1 and

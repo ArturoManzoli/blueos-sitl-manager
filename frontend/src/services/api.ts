@@ -56,6 +56,11 @@ export const VehicleApi = {
   async restart(): Promise<OperationResult> {
     return (await api.post<OperationResult>('/vehicle/restart')).data
   },
+  // Writes the arming settings only where the vehicle differs, so an empty `applied` means
+  // it already had them and there is nothing to report.
+  async relaxArmingChecks(): Promise<AppliedParams> {
+    return (await api.post<AppliedParams>('/vehicle/arming-checks')).data
+  },
   async presets(): Promise<VehiclePreset[]> {
     return (await api.get<VehiclePreset[]>('/vehicle/presets')).data
   },
