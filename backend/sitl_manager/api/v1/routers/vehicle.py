@@ -129,12 +129,18 @@ SITL_FRAMES: Dict[Vehicle, List[str]] = {
 async def status_() -> VehicleStatus:
     board = await autopilot.get_board()
     is_sitl = autopilot.is_sitl(board)
+    # Read with the rest of the status rather than polled: what blocks arming is usually
+    # something outside the simulator, so the page reports what the autopilot was saying when
+    # it last looked, and the refresh button is what asks again.
+    arming_blocked, arming_refusal = await mavlink.arming_refusal() if is_sitl else (False, None)
     return VehicleStatus(
         board=board.get("name") if board else None,
         is_sitl=is_sitl,
         frame=await autopilot.get_sitl_frame(),
         firmware_vehicle_type=await autopilot.get_firmware_vehicle_type(),
         firmware_version=await mavlink.get_autopilot_version() if is_sitl else None,
+        arming_blocked=arming_blocked,
+        arming_refusal=arming_refusal,
     )
 
 

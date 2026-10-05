@@ -1,6 +1,8 @@
 import asyncio
 import json
 import math
+import re
+from datetime import datetime
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 import aiohttp
@@ -532,6 +534,76 @@ class PositionCheck(NamedTuple):
     reached: bool
     latitude: Optional[float]
     longitude: Optional[float]
+
+
+# MAV_SYS_STATUS_PREARM_CHECK and MAV_MODE_FLAG_SAFETY_ARMED.
+PREARM_HEALTH_BIT = 0x10000000
+ARMED_MODE_BIT = 0x80
+
+# How ArduPilot prefixes a refusal, before a prearm check and on a rejected arm command.
+REFUSAL_PREFIXES = ("PreArm:", "Arm:")
+
+# ArduPilot repeats a refusal about every 30 seconds for as long as it stands, and mavlink2rest
+# keeps the last text of any kind in one slot, so a message that has stopped being repeated is
+# taken as spent: the "GPS 1: not healthy" a simulator sends while its GPS comes up would
+# otherwise read as the current reason for as long as the vehicle runs.
+REFUSAL_REPEAT_WINDOW = 45.0
+
+# Whole seconds, because mavlink2rest stamps its envelope in nanoseconds, which datetime cannot
+# read, and the window this feeds is measured in tens of seconds.
+_ENVELOPE_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
+
+
+def _message_time(body: Optional[Dict[str, Any]]) -> Optional[datetime]:
+    """When mavlink2rest last saw this message, from its status envelope."""
+    raw = ((body or {}).get("status") or {}).get("time", {}).get("last_update")
+    match = _ENVELOPE_TIME.match(raw) if isinstance(raw, str) else None
+    if match is None:
+        return None
+    return datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S")
+
+
+def _bitfield(body: Optional[Dict[str, Any]], field: str) -> int:
+    """A MAVLink bitmask field, which mavlink2rest wraps as {"bits": n}."""
+    value = ((body or {}).get("message") or {}).get(field)
+    bits = value.get("bits") if isinstance(value, dict) else value
+    return int(bits) if isinstance(bits, (int, float)) else 0
+
+
+def _statustext(body: Optional[Dict[str, Any]]) -> str:
+    """STATUSTEXT.text, which arrives as a padded list of single characters."""
+    raw = ((body or {}).get("message") or {}).get("text")
+    if not isinstance(raw, list):
+        return ""
+    return "".join(str(character) for character in raw).replace("\x00", "").strip()
+
+
+async def arming_refusal(system_id: int = DEFAULT_SYSTEM_ID) -> Tuple[bool, Optional[str]]:
+    """Whether the autopilot would refuse to arm, and the words it last refused in.
+
+    Two signals, because neither covers the other. The prearm health bit is the autopilot's own
+    verdict, reported twice a second whether or not anyone tried to arm, but it misses failures
+    it only ever says out loud: a full disk stopping the dataflash log leaves the bit healthy
+    while every arm command is rejected. The text names the reason the bit cannot, and is read
+    only while it is still being repeated, since it outlives the condition it describes.
+    """
+    heartbeat = await read_message("HEARTBEAT", system_id)
+    status = await read_message("SYS_STATUS", system_id)
+    if heartbeat is None or status is None:
+        return False, None
+    if _bitfield(heartbeat, "base_mode") & ARMED_MODE_BIT:
+        return False, None
+    reported = bool(_bitfield(status, "onboard_control_sensors_present") & PREARM_HEALTH_BIT)
+    unhealthy = reported and not _bitfield(status, "onboard_control_sensors_health") & PREARM_HEALTH_BIT
+
+    refusal: Optional[str] = None
+    text = await read_message("STATUSTEXT", system_id)
+    words = _statustext(text)
+    said_at, now = _message_time(text), _message_time(status)
+    if words.startswith(REFUSAL_PREFIXES) and said_at is not None and now is not None:
+        if (now - said_at).total_seconds() <= REFUSAL_REPEAT_WINDOW:
+            refusal = words
+    return unhealthy or refusal is not None, refusal
 
 
 NO_FIX_TYPES = ("GPS_FIX_TYPE_NO_GPS", "GPS_FIX_TYPE_NO_FIX")
